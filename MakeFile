@@ -1,0 +1,27 @@
+CXX = g++
+CXXFLAGS = -O3 -mwindows -municode -Wall -Wextra -std=c++17 -Isrc
+LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32
+
+SRCS = src/Config.cpp \
+       src/Theme.cpp \
+       src/Metrics.cpp \
+       src/Renderer.cpp \
+       src/TaskbarSync.cpp \
+       src/SettingsWindow.cpp \
+       src/Main.cpp
+
+OBJS = $(SRCS:.cpp=.o)
+TARGET = TaskbarMonitor.exe
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CXX) $(OBJS) -o $@ $(CXXFLAGS) $(LDFLAGS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f src/*.o $(TARGET)
+
+.PHONY: all clean
