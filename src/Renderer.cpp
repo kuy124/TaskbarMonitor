@@ -15,16 +15,29 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
     FillRect(memDC, &clientRect, bgBrush);
     DeleteObject(bgBrush);
 
-    int fontH = -(g_config.fontSize + 1);
-    HFONT hFontLabel = CreateFontW(fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+    // True High-DPI Point-to-Pixel Font Scaling
+    int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+    if (dpiY == 0) dpiY = 96;
+    int fontHeight = -MulDiv(g_config.fontSize, dpiY, 72);
 
-    HFONT hFontValue = CreateFontW(fontH, 0, 0, 0, g_config.fontWeight, FALSE, FALSE, FALSE,
+    HFONT hFontLabel = CreateFontW(fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+        CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+
+    HFONT hFontValue = CreateFontW(fontHeight, 0, 0, 0, g_config.fontWeight, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
 
     SetBkMode(memDC, TRANSPARENT);
+
+    // Calculate dynamic vertical row positions using actual font text metrics to prevent clipping
+    SelectObject(memDC, hFontValue);
+    TEXTMETRIC tm;
+    GetTextMetricsW(memDC, &tm);
+
+    int row1Y = (MONITOR_HEIGHT / 2) - tm.tmHeight + 1;
+    int row2Y = (MONITOR_HEIGHT / 2);
+    if (row1Y < 0) row1Y = 0;
 
     int curX = 6;
     bool hasPrev = false;
@@ -33,8 +46,8 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         if (!g_config.showDividers) return;
         HPEN dividerPen = CreatePen(PS_SOLID, 1, g_theme.divider);
         HGDIOBJ oldDivPen = SelectObject(memDC, dividerPen);
-        MoveToEx(memDC, x, 5, NULL);
-        LineTo(memDC, x, MONITOR_HEIGHT - 5);
+        MoveToEx(memDC, x, 4, NULL);
+        LineTo(memDC, x, MONITOR_HEIGHT - 4);
         SelectObject(memDC, oldDivPen);
         DeleteObject(dividerPen);
     };
@@ -50,11 +63,16 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
         SelectObject(memDC, hFontValue);
         SetTextColor(memDC, g_theme.upload);
-        TextOutW(memDC, curX, 2, netLine1, (int)wcslen(netLine1));
+        TextOutW(memDC, curX, row1Y, netLine1, (int)wcslen(netLine1));
         SetTextColor(memDC, g_theme.download);
-        TextOutW(memDC, curX, 16, netLine2, (int)wcslen(netLine2));
+        TextOutW(memDC, curX, row2Y, netLine2, (int)wcslen(netLine2));
 
-        curX += 66 + g_config.itemSpacing;
+        SIZE sz1, sz2;
+        GetTextExtentPoint32W(memDC, netLine1, (int)wcslen(netLine1), &sz1);
+        GetTextExtentPoint32W(memDC, netLine2, (int)wcslen(netLine2), &sz2);
+        int blockW = (sz1.cx > sz2.cx ? sz1.cx : sz2.cx) + 4;
+
+        curX += blockW + g_config.itemSpacing;
         hasPrev = true;
     }
 
@@ -78,15 +96,21 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
         SelectObject(memDC, hFontLabel);
         SetTextColor(memDC, g_theme.label);
-        TextOutW(memDC, curX, 2, line1Lbl, (int)wcslen(line1Lbl));
-        if (wcslen(line2Lbl) > 0) TextOutW(memDC, curX, 16, line2Lbl, (int)wcslen(line2Lbl));
+        TextOutW(memDC, curX, row1Y, line1Lbl, (int)wcslen(line1Lbl));
+        if (wcslen(line2Lbl) > 0) TextOutW(memDC, curX, row2Y, line2Lbl, (int)wcslen(line2Lbl));
+
+        SIZE szLbl;
+        GetTextExtentPoint32W(memDC, L"CPU", 3, &szLbl);
+        int valX = curX + szLbl.cx + 5;
 
         SelectObject(memDC, hFontValue);
         SetTextColor(memDC, g_theme.value);
-        TextOutW(memDC, curX + 28, 2, line1Val, (int)wcslen(line1Val));
-        if (wcslen(line2Val) > 0) TextOutW(memDC, curX + 28, 16, line2Val, (int)wcslen(line2Val));
+        TextOutW(memDC, valX, row1Y, line1Val, (int)wcslen(line1Val));
+        if (wcslen(line2Val) > 0) TextOutW(memDC, valX, row2Y, line2Val, (int)wcslen(line2Val));
 
-        curX += 64 + g_config.itemSpacing;
+        SIZE szVal;
+        GetTextExtentPoint32W(memDC, L"100%", 4, &szVal);
+        curX = valX + szVal.cx + 4 + g_config.itemSpacing;
         hasPrev = true;
     }
 
@@ -99,15 +123,24 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
         SelectObject(memDC, hFontLabel);
         SetTextColor(memDC, g_theme.label);
-        TextOutW(memDC, curX, 2, L"RAM", 3);
-        TextOutW(memDC, curX, 16, L"USE", 3);
+        TextOutW(memDC, curX, row1Y, L"RAM", 3);
+        TextOutW(memDC, curX, row2Y, L"USE", 3);
+
+        SIZE szLbl;
+        GetTextExtentPoint32W(memDC, L"RAM", 3, &szLbl);
+        int valX = curX + szLbl.cx + 5;
 
         SelectObject(memDC, hFontValue);
         SetTextColor(memDC, g_theme.value);
-        TextOutW(memDC, curX + 28, 2, ramVal, (int)wcslen(ramVal));
-        TextOutW(memDC, curX + 28, 16, memGbVal, (int)wcslen(memGbVal));
+        TextOutW(memDC, valX, row1Y, ramVal, (int)wcslen(ramVal));
+        TextOutW(memDC, valX, row2Y, memGbVal, (int)wcslen(memGbVal));
 
-        curX += 70 + g_config.itemSpacing;
+        SIZE szVal1, szVal2;
+        GetTextExtentPoint32W(memDC, ramVal, (int)wcslen(ramVal), &szVal1);
+        GetTextExtentPoint32W(memDC, memGbVal, (int)wcslen(memGbVal), &szVal2);
+        int maxValW = szVal1.cx > szVal2.cx ? szVal1.cx : szVal2.cx;
+
+        curX = valX + maxValW + 4 + g_config.itemSpacing;
         hasPrev = true;
     }
 
@@ -122,15 +155,24 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
         SelectObject(memDC, hFontLabel);
         SetTextColor(memDC, g_theme.label);
-        TextOutW(memDC, curX, 2, L"DSK", 3);
-        TextOutW(memDC, curX, 16, diskDriveLabel, (int)wcslen(diskDriveLabel));
+        TextOutW(memDC, curX, row1Y, L"DSK", 3);
+        TextOutW(memDC, curX, row2Y, diskDriveLabel, (int)wcslen(diskDriveLabel));
+
+        SIZE szLbl;
+        GetTextExtentPoint32W(memDC, L"DSK", 3, &szLbl);
+        int valX = curX + szLbl.cx + 5;
 
         SelectObject(memDC, hFontValue);
         SetTextColor(memDC, g_theme.value);
-        TextOutW(memDC, curX + 28, 2, dskVal, (int)wcslen(dskVal));
-        TextOutW(memDC, curX + 28, 16, diskFreeVal, (int)wcslen(diskFreeVal));
+        TextOutW(memDC, valX, row1Y, dskVal, (int)wcslen(dskVal));
+        TextOutW(memDC, valX, row2Y, diskFreeVal, (int)wcslen(diskFreeVal));
 
-        curX += 72 + g_config.itemSpacing;
+        SIZE szVal1, szVal2;
+        GetTextExtentPoint32W(memDC, dskVal, (int)wcslen(dskVal), &szVal1);
+        GetTextExtentPoint32W(memDC, diskFreeVal, (int)wcslen(diskFreeVal), &szVal2);
+        int maxValW = szVal1.cx > szVal2.cx ? szVal1.cx : szVal2.cx;
+
+        curX = valX + maxValW + 4 + g_config.itemSpacing;
         hasPrev = true;
     }
 
@@ -159,15 +201,24 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
         SelectObject(memDC, hFontLabel);
         SetTextColor(memDC, g_theme.label);
-        if (wcslen(l1Val) > 0) TextOutW(memDC, curX, 2, l1Lbl, (int)wcslen(l1Lbl));
-        if (wcslen(l2Val) > 0) TextOutW(memDC, curX, 16, l2Lbl, (int)wcslen(l2Lbl));
+        if (wcslen(l1Val) > 0) TextOutW(memDC, curX, row1Y, l1Lbl, (int)wcslen(l1Lbl));
+        if (wcslen(l2Val) > 0) TextOutW(memDC, curX, row2Y, l2Lbl, (int)wcslen(l2Lbl));
+
+        SIZE szLbl;
+        GetTextExtentPoint32W(memDC, L"PRC", 3, &szLbl);
+        int valX = curX + szLbl.cx + 5;
 
         SelectObject(memDC, hFontValue);
         SetTextColor(memDC, g_theme.value);
-        if (wcslen(l1Val) > 0) TextOutW(memDC, curX + 28, 2, l1Val, (int)wcslen(l1Val));
-        if (wcslen(l2Val) > 0) TextOutW(memDC, curX + 28, 16, l2Val, (int)wcslen(l2Val));
+        if (wcslen(l1Val) > 0) TextOutW(memDC, valX, row1Y, l1Val, (int)wcslen(l1Val));
+        if (wcslen(l2Val) > 0) TextOutW(memDC, valX, row2Y, l2Val, (int)wcslen(l2Val));
 
-        curX += 72 + g_config.itemSpacing;
+        SIZE szVal1, szVal2;
+        GetTextExtentPoint32W(memDC, l1Val, (int)wcslen(l1Val), &szVal1);
+        GetTextExtentPoint32W(memDC, l2Val, (int)wcslen(l2Val), &szVal2);
+        int maxValW = szVal1.cx > szVal2.cx ? szVal1.cx : szVal2.cx;
+
+        curX = valX + maxValW + 4 + g_config.itemSpacing;
         hasPrev = true;
     }
 
