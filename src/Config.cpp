@@ -35,6 +35,7 @@ void SetDefaults() {
 
     g_config.themeMode       = THEME_AUTO;
     g_config.transparentBg   = true;
+    g_config.autoContrast    = true;
     g_config.colLabel        = RGB(200, 205, 215);
     g_config.colValue        = RGB(255, 255, 255);
     g_config.colNetUp        = RGB(110, 240, 170);
@@ -91,6 +92,7 @@ void LoadConfig() {
 
         ReadDword(L"ThemeMode", g_config.themeMode);
         ReadBool(L"TransparentBg", g_config.transparentBg);
+        ReadBool(L"AutoContrast", g_config.autoContrast);
         ReadColor(L"ColLabel", g_config.colLabel);
         ReadColor(L"ColValue", g_config.colValue);
         ReadColor(L"ColNetUp", g_config.colNetUp);
@@ -142,6 +144,7 @@ void SaveConfig() {
 
         WriteDword(L"ThemeMode", (DWORD)g_config.themeMode);
         WriteBool(L"TransparentBg", g_config.transparentBg);
+        WriteBool(L"AutoContrast", g_config.autoContrast);
         WriteDword(L"ColLabel", (DWORD)g_config.colLabel);
         WriteDword(L"ColValue", (DWORD)g_config.colValue);
         WriteDword(L"ColNetUp", (DWORD)g_config.colNetUp);
@@ -159,10 +162,9 @@ void SaveConfig() {
 
 int CalculateTotalWidth(HDC hdc) {
     int count = 0;
-    int w = 12; // Base padding
+    int w = 12;
 
-    // Approximate width per item based on font size if DC not provided
-    int scale = g_config.fontSize > 11 ? (g_config.fontSize - 11) * 4 : 0;
+    int scale = g_config.fontSize > 11 ? (g_config.fontSize - 11) * 5 : 0;
 
     if (g_config.showNet) { w += (68 + scale); count++; }
     if (g_config.showCPU || g_config.showGPU) { w += (64 + scale); count++; }

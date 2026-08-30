@@ -24,6 +24,7 @@
 #include <shellapi.h>
 #include <stdio.h>
 #include <tchar.h>
+#include <math.h>
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -80,6 +81,7 @@
 #define IDC_BTN_COL_DIV      1035
 #define IDC_BTN_COL_BG       1036
 #define IDC_CHK_TRANS_BG     1037
+#define IDC_CHK_AUTOCONTRAST 1038
 
 #define IDC_EDIT_RATE        1040
 #define IDC_CHK_AUTOSTART    1041

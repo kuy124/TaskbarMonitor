@@ -1,5 +1,6 @@
 #include "Theme.h"
 #include "Config.h"
+#include <algorithm>
 
 ThemeColors g_theme = {
     RGB(80, 85, 95),
@@ -10,13 +11,62 @@ ThemeColors g_theme = {
     RGB(25, 25, 28)
 };
 
+// Automatic Contrast & Readability Engine
+static COLORREF AdjustForContrast(COLORREF textCol, COLORREF bgCol) {
+    if (!g_config.autoContrast) return textCol;
+
+    double r_bg = (double)GetRValue(bgCol);
+    double g_bg = (double)GetGValue(bgCol);
+    double b_bg = (double)GetBValue(bgCol);
+    double lumBg = (0.299 * r_bg + 0.587 * g_bg + 0.114 * b_bg) / 255.0;
+
+    double r = (double)GetRValue(textCol);
+    double g = (double)GetGValue(textCol);
+    double b = (double)GetBValue(textCol);
+    double lumText = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+
+    double contrastDiff = fabs(lumText - lumBg);
+    const double minContrast = 0.38;
+
+    if (contrastDiff < minContrast) {
+        if (lumBg < 0.5) {
+            // Dark Background -> Brighten font colors
+            int newR = std::min(255, (int)(r * 1.3 + (255 - r) * 0.45));
+            int newG = std::min(255, (int)(g * 1.3 + (255 - g) * 0.45));
+            int newB = std::min(255, (int)(b * 1.3 + (255 - b) * 0.45));
+            return RGB(newR, newG, newB);
+        } else {
+            // Light Background -> Darken font colors
+            int newR = std::max(0, (int)(r * 0.55));
+            int newG = std::max(0, (int)(g * 0.55));
+            int newB = std::max(0, (int)(b * 0.55));
+            return RGB(newR, newG, newB);
+        }
+    }
+    return textCol;
+}
+
 void UpdateThemeColors() {
+    COLORREF referenceBg = g_config.colBackground;
+
+    // Detect taskbar background if in transparent mode
+    if (g_config.transparentBg) {
+        DWORD isLight = 0, size = sizeof(DWORD);
+        HKEY hKey;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            RegQueryValueExW(hKey, L"SystemUsesLightTheme", NULL, NULL, (LPBYTE)&isLight, &size);
+            RegCloseKey(hKey);
+        }
+        referenceBg = (isLight == 1) ? RGB(242, 242, 246) : RGB(28, 28, 32);
+    }
+
     if (g_config.themeMode == THEME_CUSTOM) {
-        g_theme.label      = g_config.colLabel;
-        g_theme.value      = g_config.colValue;
-        g_theme.upload     = g_config.colNetUp;
-        g_theme.download   = g_config.colNetDown;
-        g_theme.divider    = g_config.colDivider;
+        COLORREF bg = g_config.transparentBg ? referenceBg : g_config.colBackground;
+        g_theme.label      = AdjustForContrast(g_config.colLabel, bg);
+        g_theme.value      = AdjustForContrast(g_config.colValue, bg);
+        g_theme.upload     = AdjustForContrast(g_config.colNetUp, bg);
+        g_theme.download   = AdjustForContrast(g_config.colNetDown, bg);
+        g_theme.divider    = AdjustForContrast(g_config.colDivider, bg);
         g_theme.background = g_config.colBackground;
         return;
     }
