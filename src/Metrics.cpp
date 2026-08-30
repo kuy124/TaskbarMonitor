@@ -178,24 +178,31 @@ void UpdateAllMetrics() {
     UpdateSystemStats();
 }
 
+// Clear, explicit speed units (KB/s, MB/s, GB/s or Kb/s, Mb/s, Gb/s)
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
+    if (speedBytes < 0) speedBytes = 0;
+
     if (g_config.netUnit == NET_UNIT_BITS) {
         double bits = speedBytes * 8.0;
         if (bits >= 1000000000.0) {
-            swprintf(outBuf, size, L"%4.1fG", bits / 1000000000.0);
+            swprintf(outBuf, size, L"%.1f Gb/s", bits / 1000000000.0);
         } else if (bits >= 1000000.0) {
-            swprintf(outBuf, size, L"%4.1fM", bits / 1000000.0);
+            double mb = bits / 1000000.0;
+            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f Mb/s", mb);
+            else             swprintf(outBuf, size, L"%.1f Mb/s", mb);
         } else {
-            swprintf(outBuf, size, L"%4.0fK", bits / 1000.0);
+            swprintf(outBuf, size, L"%.0f Kb/s", bits / 1000.0);
         }
     } else {
         double kb = speedBytes / 1024.0;
         if (kb >= 1048576.0) {
-            swprintf(outBuf, size, L"%4.1fG", kb / 1048576.0);
+            swprintf(outBuf, size, L"%.1f GB/s", kb / 1048576.0);
         } else if (kb >= 1024.0) {
-            swprintf(outBuf, size, L"%4.1fM", kb / 1024.0);
+            double mb = kb / 1024.0;
+            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f MB/s", mb);
+            else             swprintf(outBuf, size, L"%.1f MB/s", mb);
         } else {
-            swprintf(outBuf, size, L"%4.0fK", kb);
+            swprintf(outBuf, size, L"%.0f KB/s", kb);
         }
     }
 }

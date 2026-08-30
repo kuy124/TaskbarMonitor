@@ -1,7 +1,7 @@
 #include "Config.h"
 
 MonitorConfig g_config;
-int g_curWidth = 380;
+int g_curWidth = 410;
 
 #define CONFIG_KEY L"Software\\TaskbarMonitor"
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -161,19 +161,41 @@ void SaveConfig() {
 }
 
 int CalculateTotalWidth(HDC hdc) {
-    int count = 0;
-    int w = 12;
+    int colCount = 0;
+    int w = 22;
 
-    int scale = g_config.fontSize > 11 ? (g_config.fontSize - 11) * 5 : 0;
+    int fontScale = g_config.fontSize > 11 ? (g_config.fontSize - 11) * 6 : 0;
 
-    if (g_config.showNet) { w += (68 + scale); count++; }
-    if (g_config.showCPU || g_config.showGPU) { w += (64 + scale); count++; }
-    if (g_config.showRAM) { w += (70 + scale); count++; }
-    if (g_config.showDisk) { w += (72 + scale); count++; }
-    if (g_config.showProcess || g_config.showBattery || g_config.showUptime) { w += (72 + scale); count++; }
+    if (g_config.showNet) { 
+        w += (88 + fontScale); 
+        colCount++; 
+    }
+    if (g_config.showCPU || g_config.showGPU) { 
+        w += (68 + fontScale); 
+        colCount++; 
+    }
+    if (g_config.showRAM) { 
+        w += (74 + fontScale); 
+        colCount++; 
+    }
+    if (g_config.showDisk) { 
+        w += (76 + fontScale); 
+        colCount++; 
+    }
 
-    if (count > 1) {
-        w += (count - 1) * g_config.itemSpacing;
+    int sysCount = 0;
+    if (g_config.showProcess) sysCount++;
+    if (g_config.showBattery) sysCount++;
+    if (g_config.showUptime)  sysCount++;
+
+    int sysCols = (sysCount + 1) / 2;
+    for (int i = 0; i < sysCols; i++) {
+        w += (76 + fontScale);
+        colCount++;
+    }
+
+    if (colCount > 1) {
+        w += (colCount - 1) * g_config.itemSpacing;
     }
     return (w < 40) ? 40 : w;
 }
