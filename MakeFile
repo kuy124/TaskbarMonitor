@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS = -O3 -mwindows -municode -Wall -Wextra -std=c++17 -Isrc
-LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32
+LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32 -lcomdlg32
 
 SRCS = src/Config.cpp \
        src/Theme.cpp \

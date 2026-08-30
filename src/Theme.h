@@ -7,6 +7,7 @@ struct ThemeColors {
     COLORREF value;
     COLORREF upload;
     COLORREF download;
+    COLORREF background;
 };
 
 extern ThemeColors g_theme;

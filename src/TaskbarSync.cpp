@@ -28,14 +28,24 @@ void SyncWithTaskbar(HWND hWnd) {
     int taskbarHeight = tbRect.bottom - tbRect.top;
     int taskbarWidth = tbRect.right - tbRect.left;
     int xPos = 0;
-    int yPos = 0;
+    int yPos = tbRect.top + (taskbarHeight - MONITOR_HEIGHT) / 2 + g_config.offsetY;
 
-    if (taskbarWidth > taskbarHeight) {
-        xPos = tbRect.left + g_config.leftMargin;
-        yPos = tbRect.top + (taskbarHeight - MONITOR_HEIGHT) / 2;
-    } else {
-        xPos = tbRect.left + (taskbarWidth - g_curWidth) / 2;
-        yPos = tbRect.top + g_config.leftMargin;
+    if (g_config.alignment == ALIGN_LEFT) {
+        xPos = tbRect.left + g_config.offsetX;
+    } else if (g_config.alignment == ALIGN_RIGHT) {
+        // Try finding system tray notification area to dock directly to its left
+        HWND hTray = FindWindowExW(g_hTaskbar, NULL, L"TrayNotifyWnd", NULL);
+        RECT trayRect = {0};
+        if (hTray && GetWindowRect(hTray, &trayRect)) {
+            xPos = trayRect.left - g_curWidth - g_config.offsetX;
+        } else {
+            xPos = tbRect.right - g_curWidth - g_config.offsetX;
+        }
+    } else if (g_config.alignment == ALIGN_CENTER) {
+        xPos = tbRect.left + (taskbarWidth - g_curWidth) / 2 + g_config.offsetX;
+    } else { // ALIGN_CUSTOM
+        xPos = tbRect.left + g_config.offsetX;
+        yPos = tbRect.top + g_config.offsetY;
     }
 
     SetWindowPos(

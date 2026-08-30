@@ -35,6 +35,7 @@ target_link_libraries(TaskbarMonitor PRIVATE
     psapi
     shell32
     comctl32
+    comdlg32
 )
 
 if (MINGW)

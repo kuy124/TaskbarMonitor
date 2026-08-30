@@ -27,7 +27,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         UpdateThemeColors();
         InitMetrics();
         SetTimer(hWnd, TIMER_METRICS, g_config.refreshRateMs, NULL);
-        SetTimer(hWnd, TIMER_FAST_SYNC, 40, NULL);
+        SetTimer(hWnd, TIMER_FAST_SYNC, 35, NULL);
+        break;
+
+    case WM_LBUTTONDBLCLK:
+    case WM_LBUTTONDOWN:
+        if (!g_config.clickThrough) {
+            OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
+        }
         break;
 
     case WM_WINDOWPOSCHANGING: {
@@ -47,6 +54,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_SETTINGS, L"Settings...");
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_TASKMGR,  L"Open Task Manager");
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_REFRESH,  L"Refresh Theme");
+            AppendMenuW(hMenu, MF_STRING | (g_config.clickThrough ? MF_CHECKED : 0), ID_TRAY_CLICKTHROUGH, L"Click-Through Mode");
             AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT,     L"Exit Monitor");
 
@@ -62,6 +70,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 UpdateThemeColors();
                 SyncWithTaskbar(hWnd);
                 InvalidateRect(hWnd, NULL, FALSE);
+            } else if (cmd == ID_TRAY_CLICKTHROUGH) {
+                g_config.clickThrough = !g_config.clickThrough;
+                LONG_PTR exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
+                if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
+                else exStyle &= ~WS_EX_TRANSPARENT;
+                SetWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle);
+                SaveConfig();
             } else if (cmd == ID_TRAY_EXIT) {
                 DestroyWindow(hWnd);
             }
@@ -111,7 +126,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
-    INITCOMMONCONTROLSEX icex = { sizeof(INITCOMMONCONTROLSEX), ICC_STANDARD_CLASSES };
+    INITCOMMONCONTROLSEX icex = { sizeof(INITCOMMONCONTROLSEX), ICC_STANDARD_CLASSES | ICC_TAB_CLASSES };
     InitCommonControlsEx(&icex);
 
     g_uTaskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
@@ -124,8 +139,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassExW(&wc);
 
+    DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+    if (g_config.clickThrough) {
+        exStyle |= WS_EX_TRANSPARENT;
+    }
+
     g_hWnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        exStyle,
         wc.lpszClassName,
         L"TaskbarMonitor",
         WS_POPUP,
@@ -160,12 +180,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     SyncWithTaskbar(g_hWnd);
     ShowWindow(g_hWnd, SW_SHOWNOACTIVATE);
     UpdateWindow(g_hWnd);
-
-    // Prompt for autostart only if launched manually (not at boot)
-    bool isBootLaunch = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);
-    if (!isBootLaunch) {
-        CheckAndPromptAutostart(g_hWnd);
-    }
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {

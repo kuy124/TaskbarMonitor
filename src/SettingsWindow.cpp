@@ -6,13 +6,52 @@
 
 HWND g_hSettingsWnd = NULL;
 static HWND g_hOwnerWnd = NULL;
+static HWND g_hTab = NULL;
+static int g_currentTab = 0;
+
+static COLORREF s_colLabel, s_colValue, s_colNetUp, s_colNetDown, s_colDivider, s_colBg;
+
+static void PickColor(HWND hWnd, COLORREF& targetColor, int btnId) {
+    static COLORREF customColors[16] = {0};
+    CHOOSECOLORW cc = { sizeof(CHOOSECOLORW) };
+    cc.hwndOwner = hWnd;
+    cc.lpCustColors = customColors;
+    cc.rgbResult = targetColor;
+    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+    if (ChooseColorW(&cc)) {
+        targetColor = cc.rgbResult;
+        InvalidateRect(GetDlgItem(hWnd, btnId), NULL, TRUE);
+    }
+}
+
+static void ShowTabControls(HWND hWnd, int tabIndex) {
+    // Array of control mappings per tab
+    const int tab0Controls[] = { IDC_CHK_NET, IDC_CHK_CPU, IDC_CHK_GPU, IDC_CHK_RAM, IDC_CHK_DISK, IDC_CHK_BATTERY, IDC_CHK_UPTIME, IDC_CHK_PROCESS, IDC_COMBO_DRIVE, IDC_COMBO_NETUNIT, 0 };
+    const int tab1Controls[] = { IDC_COMBO_ALIGN, IDC_EDIT_OFFSETX, IDC_EDIT_OFFSETY, IDC_EDIT_SPACING, IDC_CHK_DIVIDERS, 0 };
+    const int tab2Controls[] = { IDC_COMBO_FONT, IDC_EDIT_FONTSIZE, IDC_COMBO_FONTWEIGHT, 0 };
+    const int tab3Controls[] = { IDC_COMBO_THEME, IDC_CHK_TRANS_BG, IDC_BTN_COL_LABEL, IDC_BTN_COL_VALUE, IDC_BTN_COL_UP, IDC_BTN_COL_DOWN, IDC_BTN_COL_DIV, IDC_BTN_COL_BG, 0 };
+    const int tab4Controls[] = { IDC_EDIT_RATE, IDC_CHK_AUTOSTART, IDC_CHK_CLICKTHROUGH, 0 };
+
+    auto SetControlsVisible = [&](const int* ids, bool visible) {
+        for (int i = 0; ids[i] != 0; i++) {
+            HWND hCtrl = GetDlgItem(hWnd, ids[i]);
+            if (hCtrl) ShowWindow(hCtrl, visible ? SW_SHOW : SW_HIDE);
+        }
+    };
+
+    SetControlsVisible(tab0Controls, tabIndex == 0);
+    SetControlsVisible(tab1Controls, tabIndex == 1);
+    SetControlsVisible(tab2Controls, tabIndex == 2);
+    SetControlsVisible(tab3Controls, tabIndex == 3);
+    SetControlsVisible(tab4Controls, tabIndex == 4);
+
+    InvalidateRect(hWnd, NULL, TRUE);
+}
 
 static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    static HFONT hFontTitle = NULL;
-    static HFONT hFontBody = NULL;
-    static HFONT hFontBtn = NULL;
-    static HBRUSH hBgBrush = NULL;
-    static HBRUSH hCardBrush = NULL;
+    static HFONT hFontTitle = NULL, hFontBody = NULL, hFontBtn = NULL;
+    static HBRUSH hBgBrush = NULL, hCardBrush = NULL;
     static HPEN hCardBorderPen = NULL;
 
     switch (msg) {
@@ -32,87 +71,108 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         hFontTitle = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Display");
-        
         hFontBody = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text");
-
         hFontBtn = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text");
 
         if (darkMode) {
-            hBgBrush = CreateSolidBrush(RGB(32, 32, 32));
-            hCardBrush = CreateSolidBrush(RGB(43, 43, 43));
-            hCardBorderPen = CreatePen(PS_SOLID, 1, RGB(58, 58, 62));
+            hBgBrush = CreateSolidBrush(RGB(30, 30, 32));
+            hCardBrush = CreateSolidBrush(RGB(40, 40, 44));
+            hCardBorderPen = CreatePen(PS_SOLID, 1, RGB(55, 55, 60));
         } else {
-            hBgBrush = CreateSolidBrush(RGB(243, 243, 243));
+            hBgBrush = CreateSolidBrush(RGB(240, 240, 243));
             hCardBrush = CreateSolidBrush(RGB(255, 255, 255));
-            hCardBorderPen = CreatePen(PS_SOLID, 1, RGB(229, 229, 229));
+            hCardBorderPen = CreatePen(PS_SOLID, 1, RGB(225, 225, 230));
         }
 
-        CreateWindowExW(0, L"BUTTON", L"Network Traffic (Upload / Download)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            34, 46, 310, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
+        s_colLabel   = g_config.colLabel;
+        s_colValue   = g_config.colValue;
+        s_colNetUp   = g_config.colNetUp;
+        s_colNetDown = g_config.colNetDown;
+        s_colDivider = g_config.colDivider;
+        s_colBg      = g_config.colBackground;
 
-        CreateWindowExW(0, L"BUTTON", L"Processors (CPU % & GPU %)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            34, 72, 310, 20, hWnd, (HMENU)IDC_CHK_COMPUTE, NULL, NULL);
+        // Create Modern Native Tabs
+        g_hTab = CreateWindowExW(0, WC_TABCONTROLW, L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            16, 12, 450, 360, hWnd, (HMENU)IDC_TABCONTROL, NULL, NULL);
+        SendMessageW(g_hTab, WM_SETFONT, (WPARAM)hFontBody, TRUE);
 
-        CreateWindowExW(0, L"BUTTON", L"Memory (RAM % & Used GB)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            34, 98, 310, 20, hWnd, (HMENU)IDC_CHK_MEMORY, NULL, NULL);
+        TCITEMW tie = { TCIF_TEXT };
+        tie.pszText = (LPWSTR)L"Metrics"; TabCtrl_InsertItem(g_hTab, 0, &tie);
+        tie.pszText = (LPWSTR)L"Position & Layout"; TabCtrl_InsertItem(g_hTab, 1, &tie);
+        tie.pszText = (LPWSTR)L"Font & Style"; TabCtrl_InsertItem(g_hTab, 2, &tie);
+        tie.pszText = (LPWSTR)L"Colors & Theme"; TabCtrl_InsertItem(g_hTab, 3, &tie);
+        tie.pszText = (LPWSTR)L"Advanced"; TabCtrl_InsertItem(g_hTab, 4, &tie);
 
-        CreateWindowExW(0, L"BUTTON", L"Storage (Disk Activity & Free Space)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            34, 124, 310, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
+        // --- TAB 0: Metrics ---
+        CreateWindowExW(0, L"BUTTON", L"Network Speed (Upload / Download)", WS_CHILD | BS_AUTOCHECKBOX, 36, 54, 380, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 80, 380, 20, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 106, 380, 20, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM % & Used GB)", WS_CHILD | BS_AUTOCHECKBOX, 36, 132, 380, 20, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Storage Activity & Free Disk Space", WS_CHILD | BS_AUTOCHECKBOX, 36, 158, 380, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Battery Percentage (Laptops)", WS_CHILD | BS_AUTOCHECKBOX, 36, 184, 380, 20, hWnd, (HMENU)IDC_CHK_BATTERY, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 36, 210, 380, 20, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Total Active Process Count", WS_CHILD | BS_AUTOCHECKBOX, 36, 236, 380, 20, hWnd, (HMENU)IDC_CHK_PROCESS, NULL, NULL);
 
-        CreateWindowExW(0, L"BUTTON", L"System Stats (Processes & Uptime / Battery)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            34, 150, 310, 20, hWnd, (HMENU)IDC_CHK_SYSTEM, NULL, NULL);
+        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 180, 276, 90, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
+        HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 180, 310, 160, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Target Drive to Monitor",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            34, 218, 170, 18, hWnd, NULL, NULL, NULL);
+        // --- TAB 1: Position & Layout ---
+        HWND hComboAlign = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 200, 60, 180, 120, hWnd, (HMENU)IDC_COMBO_ALIGN, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"12", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 200, 100, 80, 22, hWnd, (HMENU)IDC_EDIT_OFFSETX, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0", WS_CHILD | ES_AUTOHSCROLL, 200, 140, 80, 22, hWnd, (HMENU)IDC_EDIT_OFFSETY, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 200, 180, 80, 22, hWnd, (HMENU)IDC_EDIT_SPACING, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Render Vertical Dividers Between Metrics", WS_CHILD | BS_AUTOCHECKBOX, 36, 224, 380, 20, hWnd, (HMENU)IDC_CHK_DIVIDERS, NULL, NULL);
 
-        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL,
-            WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-            220, 214, 124, 120, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
+        // --- TAB 2: Typography ---
+        HWND hComboFont = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWN | WS_VSCROLL, 180, 60, 220, 200, hWnd, (HMENU)IDC_COMBO_FONT, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"11", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 180, 104, 80, 22, hWnd, (HMENU)IDC_EDIT_FONTSIZE, NULL, NULL);
+        HWND hComboWeight = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 180, 148, 140, 120, hWnd, (HMENU)IDC_COMBO_FONTWEIGHT, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Left Margin Offset",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            34, 252, 170, 18, hWnd, NULL, NULL, NULL);
+        // --- TAB 3: Theme & Colors ---
+        HWND hComboTheme = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 180, 60, 200, 120, hWnd, (HMENU)IDC_COMBO_THEME, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Transparent Background (Seamless Taskbar Blend)", WS_CHILD | BS_AUTOCHECKBOX, 36, 96, 380, 20, hWnd, (HMENU)IDC_CHK_TRANS_BG, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Label Text Color", WS_CHILD | BS_OWNERDRAW, 36, 130, 180, 28, hWnd, (HMENU)IDC_BTN_COL_LABEL, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Value Text Color", WS_CHILD | BS_OWNERDRAW, 230, 130, 180, 28, hWnd, (HMENU)IDC_BTN_COL_VALUE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Upload Speed (▲)", WS_CHILD | BS_OWNERDRAW, 36, 168, 180, 28, hWnd, (HMENU)IDC_BTN_COL_UP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Download Speed (▼)", WS_CHILD | BS_OWNERDRAW, 230, 168, 180, 28, hWnd, (HMENU)IDC_BTN_COL_DOWN, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Divider Bar Color", WS_CHILD | BS_OWNERDRAW, 36, 206, 180, 28, hWnd, (HMENU)IDC_BTN_COL_DIV, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Background Tint Color", WS_CHILD | BS_OWNERDRAW, 230, 206, 180, 28, hWnd, (HMENU)IDC_BTN_COL_BG, NULL, NULL);
 
-        HWND hComboMargin = CreateWindowExW(0, L"COMBOBOX", NULL,
-            WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-            220, 248, 124, 120, hWnd, (HMENU)IDC_COMBO_MARGIN, NULL, NULL);
+        // --- TAB 4: Advanced ---
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1000", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 220, 60, 90, 22, hWnd, (HMENU)IDC_EDIT_RATE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Launch automatically on Windows Startup", WS_CHILD | BS_AUTOCHECKBOX, 36, 100, 380, 20, hWnd, (HMENU)IDC_CHK_AUTOSTART, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Click-Through Mode (Mouse clicks pass directly through)", WS_CHILD | BS_AUTOCHECKBOX, 36, 130, 380, 20, hWnd, (HMENU)IDC_CHK_CLICKTHROUGH, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Update Polling Rate",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            34, 286, 170, 18, hWnd, NULL, NULL, NULL);
+        // Bottom Action Buttons
+        CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 160, 384, 80, 30, hWnd, (HMENU)IDC_BTN_APPLY, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Save & Close", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 248, 384, 110, 30, hWnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 366, 384, 80, 30, hWnd, (HMENU)IDC_BTN_CANCEL, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Defaults", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 16, 384, 84, 30, hWnd, (HMENU)IDC_BTN_DEFAULTS, NULL, NULL);
 
-        HWND hComboRate = CreateWindowExW(0, L"COMBOBOX", NULL,
-            WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
-            220, 282, 124, 120, hWnd, (HMENU)IDC_COMBO_RATE, NULL, NULL);
-
-        CreateWindowExW(0, L"BUTTON", L"Apply & Save",
-            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            166, 342, 108, 32, hWnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
-
-        CreateWindowExW(0, L"BUTTON", L"Cancel",
-            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            282, 342, 82, 32, hWnd, (HMENU)IDC_BTN_CANCEL, NULL, NULL);
-
+        // Initialize Font & Values
         EnumChildWindows(hWnd, [](HWND hChild, LPARAM lParam) -> BOOL {
             SendMessageW(hChild, WM_SETFONT, lParam, TRUE);
             return TRUE;
         }, (LPARAM)hFontBody);
 
+        // Set Values in Controls
         CheckDlgButton(hWnd, IDC_CHK_NET, g_config.showNet ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_COMPUTE, g_config.showCompute ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_MEMORY, g_config.showMemory ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_CPU, g_config.showCPU ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_GPU, g_config.showGPU ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_RAM, g_config.showRAM ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_DISK, g_config.showDisk ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_SYSTEM, g_config.showSystem ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_BATTERY, g_config.showBattery ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_UPTIME, g_config.showUptime ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_PROCESS, g_config.showProcess ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_DIVIDERS, g_config.showDividers ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_TRANS_BG, g_config.transparentBg ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_AUTOSTART, g_config.runAtStartup ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_CLICKTHROUGH, g_config.clickThrough ? BST_CHECKED : BST_UNCHECKED);
 
         wchar_t driveStrings[512];
         if (GetLogicalDriveStringsW(512, driveStrings)) {
@@ -127,30 +187,56 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             SendMessageW(hComboDrive, CB_SETCURSEL, selIdx, 0);
         }
 
-        int margins[] = { 4, 8, 12, 16, 24, 32, 48, 64, 96, 140 };
-        int marginSel = 1;
-        for (int i = 0; i < 10; i++) {
-            wchar_t buf[32];
-            swprintf(buf, 32, L"%d px", margins[i]);
-            SendMessageW(hComboMargin, CB_ADDSTRING, 0, (LPARAM)buf);
-            if (margins[i] == g_config.leftMargin) marginSel = i;
-        }
-        SendMessageW(hComboMargin, CB_SETCURSEL, marginSel, 0);
+        SendMessageW(hComboNetU, CB_ADDSTRING, 0, (LPARAM)L"Bytes/s (KB/s, MB/s)");
+        SendMessageW(hComboNetU, CB_ADDSTRING, 0, (LPARAM)L"Bits/s (Kbps, Mbps)");
+        SendMessageW(hComboNetU, CB_SETCURSEL, g_config.netUnit, 0);
 
-        SendMessageW(hComboRate, CB_ADDSTRING, 0, (LPARAM)L"500 ms (Fast)");
-        SendMessageW(hComboRate, CB_ADDSTRING, 0, (LPARAM)L"1000 ms (Normal)");
-        SendMessageW(hComboRate, CB_ADDSTRING, 0, (LPARAM)L"2000 ms (Eco)");
-        int rateSel = (g_config.refreshRateMs == 500) ? 0 : (g_config.refreshRateMs == 2000 ? 2 : 1);
-        SendMessageW(hComboRate, CB_SETCURSEL, rateSel, 0);
+        SendMessageW(hComboAlign, CB_ADDSTRING, 0, (LPARAM)L"Left Aligned");
+        SendMessageW(hComboAlign, CB_ADDSTRING, 0, (LPARAM)L"Right (Tray Adjacent)");
+        SendMessageW(hComboAlign, CB_ADDSTRING, 0, (LPARAM)L"Center Aligned");
+        SendMessageW(hComboAlign, CB_ADDSTRING, 0, (LPARAM)L"Custom Absolute X/Y");
+        SendMessageW(hComboAlign, CB_SETCURSEL, g_config.alignment, 0);
+
+        wchar_t numBuf[32];
+        swprintf(numBuf, 32, L"%d", g_config.offsetX);     SetDlgItemTextW(hWnd, IDC_EDIT_OFFSETX, numBuf);
+        swprintf(numBuf, 32, L"%d", g_config.offsetY);     SetDlgItemTextW(hWnd, IDC_EDIT_OFFSETY, numBuf);
+        swprintf(numBuf, 32, L"%d", g_config.itemSpacing); SetDlgItemTextW(hWnd, IDC_EDIT_SPACING, numBuf);
+        swprintf(numBuf, 32, L"%d", g_config.fontSize);    SetDlgItemTextW(hWnd, IDC_EDIT_FONTSIZE, numBuf);
+        swprintf(numBuf, 32, L"%d", g_config.refreshRateMs); SetDlgItemTextW(hWnd, IDC_EDIT_RATE, numBuf);
+
+        const wchar_t* popularFonts[] = {
+            L"Segoe UI Variable Display", L"Segoe UI", L"Cascadia Code", L"Consolas",
+            L"Bahnschrift", L"Calibri", L"Arial", L"Tahoma", L"Lucida Console"
+        };
+        for (const auto* font : popularFonts) {
+            SendMessageW(hComboFont, CB_ADDSTRING, 0, (LPARAM)font);
+        }
+        SetDlgItemTextW(hWnd, IDC_COMBO_FONT, g_config.fontFamily);
+
+        SendMessageW(hComboWeight, CB_ADDSTRING, 0, (LPARAM)L"Normal (400)");
+        SendMessageW(hComboWeight, CB_ADDSTRING, 0, (LPARAM)L"Medium (500)");
+        SendMessageW(hComboWeight, CB_ADDSTRING, 0, (LPARAM)L"Semi-Bold (600)");
+        SendMessageW(hComboWeight, CB_ADDSTRING, 0, (LPARAM)L"Bold (700)");
+        int wSel = (g_config.fontWeight == FW_BOLD) ? 3 : (g_config.fontWeight == FW_SEMIBOLD ? 2 : (g_config.fontWeight == FW_MEDIUM ? 1 : 0));
+        SendMessageW(hComboWeight, CB_SETCURSEL, wSel, 0);
+
+        SendMessageW(hComboTheme, CB_ADDSTRING, 0, (LPARAM)L"Auto (Follow Windows Theme)");
+        SendMessageW(hComboTheme, CB_ADDSTRING, 0, (LPARAM)L"Dark Theme");
+        SendMessageW(hComboTheme, CB_ADDSTRING, 0, (LPARAM)L"Light Theme");
+        SendMessageW(hComboTheme, CB_ADDSTRING, 0, (LPARAM)L"Fully Custom Palette");
+        SendMessageW(hComboTheme, CB_SETCURSEL, g_config.themeMode, 0);
+
+        ShowTabControls(hWnd, 0);
         break;
     }
 
-    case WM_ERASEBKGND: {
-        HDC hdc = (HDC)wParam;
-        RECT rc;
-        GetClientRect(hWnd, &rc);
-        FillRect(hdc, &rc, hBgBrush);
-        return 1;
+    case WM_NOTIFY: {
+        LPNMHDR pnm = (LPNMHDR)lParam;
+        if (pnm->idFrom == IDC_TABCONTROL && pnm->code == TCN_SELCHANGE) {
+            g_currentTab = TabCtrl_GetCurSel(g_hTab);
+            ShowTabControls(hWnd, g_currentTab);
+        }
+        break;
     }
 
     case WM_PAINT: {
@@ -158,19 +244,26 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         HDC hdc = BeginPaint(hWnd, &ps);
         SetBkMode(hdc, TRANSPARENT);
 
-        HGDIOBJ oldBrush = SelectObject(hdc, hCardBrush);
-        HGDIOBJ oldPen = SelectObject(hdc, hCardBorderPen);
-
-        RoundRect(hdc, 16, 14, 364, 182, 8, 8);
-        RoundRect(hdc, 16, 194, 364, 326, 8, 8);
-
-        SelectObject(hdc, oldBrush);
-        SelectObject(hdc, oldPen);
-
         HGDIOBJ oldFont = SelectObject(hdc, hFontTitle);
-        SetTextColor(hdc, RGB(255, 255, 255));
-        TextOutW(hdc, 32, 22, L"Displayed Metrics", 17);
-        TextOutW(hdc, 32, 202, L"Hardware & Customization", 24);
+        SetTextColor(hdc, RGB(245, 245, 250));
+
+        if (g_currentTab == 0) {
+            TextOutW(hdc, 36, 278, L"Storage Target Drive:", 21);
+            TextOutW(hdc, 36, 312, L"Network Data Units:", 19);
+        } else if (g_currentTab == 1) {
+            TextOutW(hdc, 36, 62, L"Taskbar Alignment:", 18);
+            TextOutW(hdc, 36, 102, L"Horizontal Offset (px):", 23);
+            TextOutW(hdc, 36, 142, L"Vertical Offset (px):", 21);
+            TextOutW(hdc, 36, 182, L"Metric Gap Spacing (px):", 24);
+        } else if (g_currentTab == 2) {
+            TextOutW(hdc, 36, 62, L"Font Family / Name:", 19);
+            TextOutW(hdc, 36, 106, L"Font Size (pts):", 16);
+            TextOutW(hdc, 36, 150, L"Font Weight:", 12);
+        } else if (g_currentTab == 3) {
+            TextOutW(hdc, 36, 62, L"Theme Preset:", 13);
+        } else if (g_currentTab == 4) {
+            TextOutW(hdc, 36, 62, L"Polling Rate (ms):", 18);
+        }
 
         SelectObject(hdc, oldFont);
         EndPaint(hWnd, &ps);
@@ -181,49 +274,56 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
     case WM_CTLCOLORBTN: {
         HDC hdcStatic = (HDC)wParam;
         SetBkMode(hdcStatic, TRANSPARENT);
-        SetTextColor(hdcStatic, RGB(235, 235, 235));
-        return (LRESULT)hCardBrush;
+        SetTextColor(hdcStatic, RGB(230, 230, 235));
+        return (LRESULT)hBgBrush;
     }
 
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;
-        if (dis->CtlID == IDC_BTN_SAVE) {
-            HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(0, 90, 170) : RGB(0, 103, 192));
-            HPEN nullPen = CreatePen(PS_NULL, 0, RGB(0, 0, 0));
-            HGDIOBJ ob = SelectObject(dis->hDC, btnBrush);
-            HGDIOBJ op = SelectObject(dis->hDC, nullPen);
-
-            RoundRect(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom, 6, 6);
-
-            SelectObject(dis->hDC, ob);
-            SelectObject(dis->hDC, op);
+        if (dis->CtlID == IDC_BTN_SAVE || dis->CtlID == IDC_BTN_APPLY) {
+            HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(0, 90, 170) : RGB(0, 110, 210));
+            FillRect(dis->hDC, &dis->rcItem, btnBrush);
             DeleteObject(btnBrush);
-            DeleteObject(nullPen);
-
             SetBkMode(dis->hDC, TRANSPARENT);
             SetTextColor(dis->hDC, RGB(255, 255, 255));
-            HGDIOBJ of = SelectObject(dis->hDC, hFontBtn);
-            DrawTextW(dis->hDC, L"Apply & Save", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(dis->hDC, of);
+            SelectObject(dis->hDC, hFontBtn);
+            DrawTextW(dis->hDC, dis->CtlID == IDC_BTN_SAVE ? L"Save & Close" : L"Apply", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             return TRUE;
-        } else if (dis->CtlID == IDC_BTN_CANCEL) {
-            HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(55, 55, 60) : RGB(45, 45, 48));
-            HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(65, 65, 70));
-            HGDIOBJ ob = SelectObject(dis->hDC, btnBrush);
-            HGDIOBJ op = SelectObject(dis->hDC, borderPen);
-
-            RoundRect(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom, 6, 6);
-
-            SelectObject(dis->hDC, ob);
-            SelectObject(dis->hDC, op);
+        } else if (dis->CtlID == IDC_BTN_CANCEL || dis->CtlID == IDC_BTN_DEFAULTS) {
+            HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(50, 50, 55) : RGB(42, 42, 46));
+            FillRect(dis->hDC, &dis->rcItem, btnBrush);
             DeleteObject(btnBrush);
-            DeleteObject(borderPen);
-
             SetBkMode(dis->hDC, TRANSPARENT);
-            SetTextColor(dis->hDC, RGB(225, 225, 225));
-            HGDIOBJ of = SelectObject(dis->hDC, hFontBtn);
-            DrawTextW(dis->hDC, L"Cancel", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(dis->hDC, of);
+            SetTextColor(dis->hDC, RGB(220, 220, 225));
+            SelectObject(dis->hDC, hFontBtn);
+            DrawTextW(dis->hDC, dis->CtlID == IDC_BTN_CANCEL ? L"Cancel" : L"Defaults", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            return TRUE;
+        } else if (dis->CtlID >= IDC_BTN_COL_LABEL && dis->CtlID <= IDC_BTN_COL_BG) {
+            COLORREF c = RGB(0, 0, 0);
+            const wchar_t* lbl = L"Color";
+            switch (dis->CtlID) {
+                case IDC_BTN_COL_LABEL: c = s_colLabel; lbl = L"Labels"; break;
+                case IDC_BTN_COL_VALUE: c = s_colValue; lbl = L"Values"; break;
+                case IDC_BTN_COL_UP:    c = s_colNetUp; lbl = L"Upload (▲)"; break;
+                case IDC_BTN_COL_DOWN:  c = s_colNetDown; lbl = L"Download (▼)"; break;
+                case IDC_BTN_COL_DIV:   c = s_colDivider; lbl = L"Dividers"; break;
+                case IDC_BTN_COL_BG:    c = s_colBg; lbl = L"Background"; break;
+            }
+            HBRUSH btnBrush = CreateSolidBrush(RGB(45, 45, 50));
+            FillRect(dis->hDC, &dis->rcItem, btnBrush);
+            DeleteObject(btnBrush);
+
+            RECT colorSwatch = { dis->rcItem.left + 6, dis->rcItem.top + 5, dis->rcItem.left + 26, dis->rcItem.bottom - 5 };
+            HBRUSH swatchBrush = CreateSolidBrush(c);
+            FillRect(dis->hDC, &colorSwatch, swatchBrush);
+            DeleteObject(swatchBrush);
+
+            RECT textRc = dis->rcItem;
+            textRc.left += 32;
+            SetBkMode(dis->hDC, TRANSPARENT);
+            SetTextColor(dis->hDC, RGB(240, 240, 240));
+            SelectObject(dis->hDC, hFontBody);
+            DrawTextW(dis->hDC, lbl, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             return TRUE;
         }
         break;
@@ -231,42 +331,79 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
     case WM_COMMAND: {
         int id = LOWORD(wParam);
-        if (id == IDC_BTN_SAVE) {
-            g_config.showNet     = (IsDlgButtonChecked(hWnd, IDC_CHK_NET) == BST_CHECKED);
-            g_config.showCompute = (IsDlgButtonChecked(hWnd, IDC_CHK_COMPUTE) == BST_CHECKED);
-            g_config.showMemory  = (IsDlgButtonChecked(hWnd, IDC_CHK_MEMORY) == BST_CHECKED);
-            g_config.showDisk    = (IsDlgButtonChecked(hWnd, IDC_CHK_DISK) == BST_CHECKED);
-            g_config.showSystem  = (IsDlgButtonChecked(hWnd, IDC_CHK_SYSTEM) == BST_CHECKED);
+        if (id == IDC_BTN_COL_LABEL) PickColor(hWnd, s_colLabel, IDC_BTN_COL_LABEL);
+        else if (id == IDC_BTN_COL_VALUE) PickColor(hWnd, s_colValue, IDC_BTN_COL_VALUE);
+        else if (id == IDC_BTN_COL_UP) PickColor(hWnd, s_colNetUp, IDC_BTN_COL_UP);
+        else if (id == IDC_BTN_COL_DOWN) PickColor(hWnd, s_colNetDown, IDC_BTN_COL_DOWN);
+        else if (id == IDC_BTN_COL_DIV) PickColor(hWnd, s_colDivider, IDC_BTN_COL_DIV);
+        else if (id == IDC_BTN_COL_BG) PickColor(hWnd, s_colBg, IDC_BTN_COL_BG);
+        else if (id == IDC_BTN_DEFAULTS) {
+            SetDefaults();
+            DestroyWindow(hWnd);
+            OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(g_hOwnerWnd, GWLP_HINSTANCE), g_hOwnerWnd);
+        } else if (id == IDC_BTN_SAVE || id == IDC_BTN_APPLY) {
+            g_config.showNet         = (IsDlgButtonChecked(hWnd, IDC_CHK_NET) == BST_CHECKED);
+            g_config.showCPU         = (IsDlgButtonChecked(hWnd, IDC_CHK_CPU) == BST_CHECKED);
+            g_config.showGPU         = (IsDlgButtonChecked(hWnd, IDC_CHK_GPU) == BST_CHECKED);
+            g_config.showRAM         = (IsDlgButtonChecked(hWnd, IDC_CHK_RAM) == BST_CHECKED);
+            g_config.showDisk        = (IsDlgButtonChecked(hWnd, IDC_CHK_DISK) == BST_CHECKED);
+            g_config.showBattery     = (IsDlgButtonChecked(hWnd, IDC_CHK_BATTERY) == BST_CHECKED);
+            g_config.showUptime      = (IsDlgButtonChecked(hWnd, IDC_CHK_UPTIME) == BST_CHECKED);
+            g_config.showProcess     = (IsDlgButtonChecked(hWnd, IDC_CHK_PROCESS) == BST_CHECKED);
+            g_config.showDividers    = (IsDlgButtonChecked(hWnd, IDC_CHK_DIVIDERS) == BST_CHECKED);
+            g_config.transparentBg   = (IsDlgButtonChecked(hWnd, IDC_CHK_TRANS_BG) == BST_CHECKED);
+            g_config.runAtStartup    = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOSTART) == BST_CHECKED);
+            g_config.clickThrough    = (IsDlgButtonChecked(hWnd, IDC_CHK_CLICKTHROUGH) == BST_CHECKED);
 
             HWND hComboDrive = GetDlgItem(hWnd, IDC_COMBO_DRIVE);
             int driveSel = (int)SendMessageW(hComboDrive, CB_GETCURSEL, 0, 0);
-            if (driveSel != CB_ERR) {
-                SendMessageW(hComboDrive, CB_GETLBTEXT, driveSel, (LPARAM)g_config.targetDrive);
-            }
+            if (driveSel != CB_ERR) SendMessageW(hComboDrive, CB_GETLBTEXT, driveSel, (LPARAM)g_config.targetDrive);
 
-            int margins[] = { 4, 8, 12, 16, 24, 32, 48, 64, 96, 140 };
-            HWND hComboMargin = GetDlgItem(hWnd, IDC_COMBO_MARGIN);
-            int marginSel = (int)SendMessageW(hComboMargin, CB_GETCURSEL, 0, 0);
-            if (marginSel >= 0 && marginSel < 10) {
-                g_config.leftMargin = margins[marginSel];
-            }
+            g_config.netUnit   = (int)SendMessageW(GetDlgItem(hWnd, IDC_COMBO_NETUNIT), CB_GETCURSEL, 0, 0);
+            g_config.alignment = (int)SendMessageW(GetDlgItem(hWnd, IDC_COMBO_ALIGN), CB_GETCURSEL, 0, 0);
+            g_config.themeMode = (int)SendMessageW(GetDlgItem(hWnd, IDC_COMBO_THEME), CB_GETCURSEL, 0, 0);
 
-            HWND hComboRate = GetDlgItem(hWnd, IDC_COMBO_RATE);
-            int rateSel = (int)SendMessageW(hComboRate, CB_GETCURSEL, 0, 0);
-            g_config.refreshRateMs = (rateSel == 0) ? 500 : (rateSel == 2 ? 2000 : 1000);
+            wchar_t editBuf[64];
+            GetDlgItemTextW(hWnd, IDC_EDIT_OFFSETX, editBuf, 64);   g_config.offsetX = _wtoi(editBuf);
+            GetDlgItemTextW(hWnd, IDC_EDIT_OFFSETY, editBuf, 64);   g_config.offsetY = _wtoi(editBuf);
+            GetDlgItemTextW(hWnd, IDC_EDIT_SPACING, editBuf, 64);   g_config.itemSpacing = _wtoi(editBuf);
+            GetDlgItemTextW(hWnd, IDC_EDIT_FONTSIZE, editBuf, 64);  g_config.fontSize = _wtoi(editBuf);
+            GetDlgItemTextW(hWnd, IDC_EDIT_RATE, editBuf, 64);      g_config.refreshRateMs = _wtoi(editBuf);
+
+            if (g_config.refreshRateMs < 100) g_config.refreshRateMs = 100;
+            if (g_config.fontSize < 8) g_config.fontSize = 8;
+            if (g_config.fontSize > 20) g_config.fontSize = 20;
+
+            GetDlgItemTextW(hWnd, IDC_COMBO_FONT, g_config.fontFamily, 64);
+
+            int wSel = (int)SendMessageW(GetDlgItem(hWnd, IDC_COMBO_FONTWEIGHT), CB_GETCURSEL, 0, 0);
+            g_config.fontWeight = (wSel == 3) ? FW_BOLD : (wSel == 2 ? FW_SEMIBOLD : (wSel == 1 ? FW_MEDIUM : FW_NORMAL));
+
+            g_config.colLabel    = s_colLabel;
+            g_config.colValue    = s_colValue;
+            g_config.colNetUp    = s_colNetUp;
+            g_config.colNetDown  = s_colNetDown;
+            g_config.colDivider  = s_colDivider;
+            g_config.colBackground = s_colBg;
 
             SaveConfig();
 
             if (g_hOwnerWnd && IsWindow(g_hOwnerWnd)) {
+                // Update Click-Through Style dynamically
+                LONG_PTR exStyle = GetWindowLongPtr(g_hOwnerWnd, GWL_EXSTYLE);
+                if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
+                else exStyle &= ~WS_EX_TRANSPARENT;
+                SetWindowLongPtr(g_hOwnerWnd, GWL_EXSTYLE, exStyle);
+
                 SetTimer(g_hOwnerWnd, TIMER_METRICS, g_config.refreshRateMs, NULL);
                 g_curWidth = CalculateTotalWidth();
-                UpdateDisk();
                 UpdateThemeColors();
+                UpdateDisk();
                 SyncWithTaskbar(g_hOwnerWnd);
                 InvalidateRect(g_hOwnerWnd, NULL, TRUE);
             }
 
-            DestroyWindow(hWnd);
+            if (id == IDC_BTN_SAVE) DestroyWindow(hWnd);
         } else if (id == IDC_BTN_CANCEL) {
             DestroyWindow(hWnd);
         }
@@ -304,19 +441,19 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
     WNDCLASSEXW swc = { sizeof(WNDCLASSEXW) };
     swc.lpfnWndProc = SettingsWndProc;
     swc.hInstance = hInstance;
-    swc.lpszClassName = L"Windows11FluentSettingsGUI";
+    swc.lpszClassName = L"Windows11NativeTaskbarMonitorSettings";
     swc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassExW(&swc);
 
-    int winW = 396;
-    int winH = 428;
+    int winW = 500;
+    int winH = 466;
     int posX = (GetSystemMetrics(SM_CXSCREEN) - winW) / 2;
     int posY = (GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
 
     g_hSettingsWnd = CreateWindowExW(
         WS_EX_TOPMOST,
         swc.lpszClassName,
-        L"Taskbar Monitor Settings",
+        L"Taskbar Monitor Configuration",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
         posX, posY, winW, winH,
         NULL, NULL, hInstance, NULL

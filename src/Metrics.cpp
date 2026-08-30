@@ -32,11 +32,10 @@ void CleanupMetrics() {
 }
 
 void UpdateGPU() {
-    if (!g_hPdhQuery || !g_hGpuCounter || !g_config.showCompute) return;
+    if (!g_hPdhQuery || !g_hGpuCounter || !g_config.showGPU) return;
 
     if (PdhCollectQueryData(g_hPdhQuery) == ERROR_SUCCESS) {
-        DWORD bufferSize = 0;
-        DWORD itemCount = 0;
+        DWORD bufferSize = 0, itemCount = 0;
         PDH_STATUS status = PdhGetFormattedCounterArrayW(g_hGpuCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, NULL);
         if (status == PDH_MORE_DATA && bufferSize > 0) {
             PDH_FMT_COUNTERVALUE_ITEM_W* pItems = (PDH_FMT_COUNTERVALUE_ITEM_W*)malloc(bufferSize);
@@ -81,25 +80,27 @@ void UpdateDisk() {
 }
 
 void UpdateSystemStats() {
-    if (!g_config.showSystem) return;
-
-    PERFORMANCE_INFORMATION pi = { sizeof(PERFORMANCE_INFORMATION) };
-    if (GetPerformanceInfo(&pi, sizeof(pi))) {
-        g_metrics.processCount = pi.ProcessCount;
+    if (g_config.showProcess) {
+        PERFORMANCE_INFORMATION pi = { sizeof(PERFORMANCE_INFORMATION) };
+        if (GetPerformanceInfo(&pi, sizeof(pi))) {
+            g_metrics.processCount = pi.ProcessCount;
+        }
     }
 
-    SYSTEM_POWER_STATUS sps;
-    if (GetSystemPowerStatus(&sps)) {
-        if (sps.BatteryLifePercent != 255 && sps.BatteryFlag != 128) {
-            g_metrics.batteryPercent = sps.BatteryLifePercent;
-        } else {
-            g_metrics.batteryPercent = -1;
+    if (g_config.showBattery) {
+        SYSTEM_POWER_STATUS sps;
+        if (GetSystemPowerStatus(&sps)) {
+            if (sps.BatteryLifePercent != 255 && sps.BatteryFlag != 128) {
+                g_metrics.batteryPercent = sps.BatteryLifePercent;
+            } else {
+                g_metrics.batteryPercent = -1;
+            }
         }
     }
 }
 
 void UpdateCPU() {
-    if (!g_config.showCompute) return;
+    if (!g_config.showCPU) return;
 
     FILETIME idleTime, kernelTime, userTime;
     if (GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
@@ -127,7 +128,7 @@ void UpdateCPU() {
 }
 
 void UpdateMemory() {
-    if (!g_config.showMemory) return;
+    if (!g_config.showRAM) return;
 
     MEMORYSTATUSEX memInfo;
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
@@ -142,8 +143,7 @@ void UpdateNetwork() {
 
     PMIB_IF_TABLE2 pIfTable = NULL;
     if (GetIfTable2(&pIfTable) == NO_ERROR) {
-        ULONG64 totalIn = 0;
-        ULONG64 totalOut = 0;
+        ULONG64 totalIn = 0, totalOut = 0;
 
         for (ULONG i = 0; i < pIfTable->NumEntries; i++) {
             MIB_IF_ROW2* row = &pIfTable->Table[i];
@@ -157,8 +157,8 @@ void UpdateNetwork() {
         ULONGLONG now = GetTickCount64();
         if (g_prevTickCount != 0 && now > g_prevTickCount) {
             double elapsedSec = (now - g_prevTickCount) / 1000.0;
-            g_metrics.downloadSpeed = (double)(totalIn - g_prevInBytes) / 1024.0 / elapsedSec;
-            g_metrics.uploadSpeed = (double)(totalOut - g_prevOutBytes) / 1024.0 / elapsedSec;
+            g_metrics.downloadSpeed = (double)(totalIn - g_prevInBytes) / elapsedSec;
+            g_metrics.uploadSpeed = (double)(totalOut - g_prevOutBytes) / elapsedSec;
             if (g_metrics.downloadSpeed < 0) g_metrics.downloadSpeed = 0;
             if (g_metrics.uploadSpeed < 0)   g_metrics.uploadSpeed = 0;
         }
@@ -178,10 +178,24 @@ void UpdateAllMetrics() {
     UpdateSystemStats();
 }
 
-void FormatSpeed(double speedKB, wchar_t* outBuf, size_t size) {
-    if (speedKB >= 1024.0) {
-        swprintf(outBuf, size, L"%5.1fM", speedKB / 1024.0);
+void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
+    if (g_config.netUnit == NET_UNIT_BITS) {
+        double bits = speedBytes * 8.0;
+        if (bits >= 1000000000.0) {
+            swprintf(outBuf, size, L"%4.1fG", bits / 1000000000.0);
+        } else if (bits >= 1000000.0) {
+            swprintf(outBuf, size, L"%4.1fM", bits / 1000000.0);
+        } else {
+            swprintf(outBuf, size, L"%4.0fK", bits / 1000.0);
+        }
     } else {
-        swprintf(outBuf, size, L"%5.0fK", speedKB);
+        double kb = speedBytes / 1024.0;
+        if (kb >= 1048576.0) {
+            swprintf(outBuf, size, L"%4.1fG", kb / 1048576.0);
+        } else if (kb >= 1024.0) {
+            swprintf(outBuf, size, L"%4.1fM", kb / 1024.0);
+        } else {
+            swprintf(outBuf, size, L"%4.0fK", kb);
+        }
     }
 }

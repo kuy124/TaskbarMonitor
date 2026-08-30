@@ -10,8 +10,8 @@ struct SystemMetrics {
     double diskFreeGB;
     DWORD  processCount;
     int    batteryPercent;
-    double uploadSpeed;
-    double downloadSpeed;
+    double uploadSpeed;    // Bytes per sec
+    double downloadSpeed;  // Bytes per sec
 };
 
 extern SystemMetrics g_metrics;
@@ -25,4 +25,4 @@ void UpdateMemory();
 void UpdateNetwork();
 void UpdateSystemStats();
 void UpdateAllMetrics();
-void FormatSpeed(double speedKB, wchar_t* outBuf, size_t size);
+void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size);
