@@ -1,0 +1,21 @@
+# Build artifacts
+*.o
+*.res.o
+*.exe
+*.obj
+
+# Build output directories
+build/
+out/
+Debug/
+Release/
+
+# IDE / editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.db

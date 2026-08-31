@@ -2,70 +2,116 @@
 #include "Config.h"
 
 HWND g_hTaskbar = NULL;
-static HWINEVENTHOOK g_hHookFore = NULL;
 static HWINEVENTHOOK g_hHookLoc = NULL;
+static HWINEVENTHOOK g_hHookShow = NULL;
+static HWINEVENTHOOK g_hHookHide = NULL;
+static HWINEVENTHOOK g_hHookCreate = NULL;
 static HWND g_hMainWnd = NULL;
+
+void AttachToTaskbar(HWND hWnd) {
+    g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (!g_hTaskbar || !IsWindow(g_hTaskbar)) return;
+
+    if (GetParent(hWnd) != g_hTaskbar) {
+        LONG_PTR style = GetWindowLongPtrW(hWnd, GWL_STYLE);
+        style &= ~WS_POPUP;
+        style |= WS_CHILD | WS_CLIPSIBLINGS;
+        SetWindowLongPtrW(hWnd, GWL_STYLE, style);
+
+        LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+        exStyle &= ~WS_EX_TOPMOST;
+        exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        if (g_config.clickThrough) {
+            exStyle |= WS_EX_TRANSPARENT;
+        }
+        SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
+
+        SetParent(hWnd, g_hTaskbar);
+    }
+}
 
 void SyncWithTaskbar(HWND hWnd) {
     if (!g_hTaskbar || !IsWindow(g_hTaskbar)) {
-        g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+        AttachToTaskbar(hWnd);
         if (!g_hTaskbar) return;
-        SetWindowLongPtr(hWnd, GWLP_HWNDPARENT, (LONG_PTR)g_hTaskbar);
     }
 
-    RECT tbRect = {0};
-    if (!GetWindowRect(g_hTaskbar, &tbRect)) return;
+    if (GetParent(hWnd) != g_hTaskbar) {
+        AttachToTaskbar(hWnd);
+    }
 
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    RECT tbClientRect = {0};
+    if (!GetClientRect(g_hTaskbar, &tbClientRect)) return;
 
-    if (tbRect.bottom - tbRect.top <= 4 || tbRect.right - tbRect.left <= 4 ||
-        tbRect.top >= screenH - 3 || tbRect.bottom <= 3) {
+    int tbWidth = tbClientRect.right - tbClientRect.left;
+    int tbHeight = tbClientRect.bottom - tbClientRect.top;
+
+    if (tbWidth <= 4 || tbHeight <= 4) {
         ShowWindow(hWnd, SW_HIDE);
         return;
     }
 
-    int taskbarHeight = tbRect.bottom - tbRect.top;
-    int taskbarWidth = tbRect.right - tbRect.left;
     int xPos = 0;
-    int yPos = tbRect.top + (taskbarHeight - MONITOR_HEIGHT) / 2 + g_config.offsetY;
+    int yPos = (tbHeight - MONITOR_HEIGHT) / 2 + g_config.offsetY;
 
     if (g_config.alignment == ALIGN_LEFT) {
-        xPos = tbRect.left + g_config.offsetX;
+        xPos = g_config.offsetX;
     } else if (g_config.alignment == ALIGN_RIGHT) {
-        // Try finding system tray notification area to dock directly to its left
         HWND hTray = FindWindowExW(g_hTaskbar, NULL, L"TrayNotifyWnd", NULL);
-        RECT trayRect = {0};
-        if (hTray && GetWindowRect(hTray, &trayRect)) {
-            xPos = trayRect.left - g_curWidth - g_config.offsetX;
+        if (hTray && IsWindowVisible(hTray)) {
+            RECT trayRect = {0};
+            GetWindowRect(hTray, &trayRect);
+            POINT ptTray = { trayRect.left, trayRect.top };
+            ScreenToClient(g_hTaskbar, &ptTray);
+            xPos = ptTray.x - g_curWidth - g_config.offsetX;
         } else {
-            xPos = tbRect.right - g_curWidth - g_config.offsetX;
+            xPos = tbWidth - g_curWidth - g_config.offsetX;
         }
     } else if (g_config.alignment == ALIGN_CENTER) {
-        xPos = tbRect.left + (taskbarWidth - g_curWidth) / 2 + g_config.offsetX;
+        xPos = (tbWidth - g_curWidth) / 2 + g_config.offsetX;
     } else { // ALIGN_CUSTOM
-        xPos = tbRect.left + g_config.offsetX;
-        yPos = tbRect.top + g_config.offsetY;
+        xPos = g_config.offsetX;
+        yPos = g_config.offsetY;
     }
 
-    SetWindowPos(
-        hWnd,
-        HWND_TOPMOST,
-        xPos, yPos, g_curWidth, MONITOR_HEIGHT,
-        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS
-    );
+    if (xPos < 0) xPos = 0;
+    if (xPos + g_curWidth > tbWidth) xPos = tbWidth - g_curWidth;
+    if (yPos < 0) yPos = 0;
+    if (yPos + MONITOR_HEIGHT > tbHeight) yPos = tbHeight - MONITOR_HEIGHT;
+
+    SetWindowPos(hWnd, HWND_TOP, xPos, yPos, g_curWidth, MONITOR_HEIGHT,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
-static VOID CALLBACK LocationWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
-    if (hwnd == g_hTaskbar && g_hMainWnd && IsWindow(g_hMainWnd)) {
+static bool IsTaskbarOrChild(HWND hwnd) {
+    if (!hwnd || !g_hTaskbar) return false;
+    if (hwnd == g_hTaskbar) return true;
+    return IsChild(g_hTaskbar, hwnd);
+}
+
+static void CALLBACK LocationWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
+    if (IsTaskbarOrChild(hwnd) && g_hMainWnd && IsWindow(g_hMainWnd)) {
         SyncWithTaskbar(g_hMainWnd);
     }
 }
 
-static VOID CALLBACK ForegroundWinEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
-    if (g_hMainWnd && IsWindow(g_hMainWnd)) {
+static void CALLBACK ShowHideWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
+    if (!g_hMainWnd || !IsWindow(g_hMainWnd)) return;
+    if (IsTaskbarOrChild(hwnd)) {
         SyncWithTaskbar(g_hMainWnd);
     }
+}
+
+static void CALLBACK CreateWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
+    if (!g_hMainWnd || !IsWindow(g_hMainWnd)) return;
+    if (hwnd && IsWindow(hwnd)) {
+        wchar_t cls[64] = {0};
+        GetClassNameW(hwnd, cls, 64);
+        if (wcscmp(cls, L"Shell_TrayWnd") == 0) {
+            AttachToTaskbar(g_hMainWnd);
+        }
+    }
+    SyncWithTaskbar(g_hMainWnd);
 }
 
 void InitTaskbarHooks(HWND hWnd) {
@@ -85,14 +131,34 @@ void InitTaskbarHooks(HWND hWnd) {
                 0,
                 WINEVENT_OUTOFCONTEXT
             );
+
+            g_hHookShow = SetWinEventHook(
+                EVENT_OBJECT_SHOW,
+                EVENT_OBJECT_SHOW,
+                NULL,
+                ShowHideWinEventProc,
+                explorerPid,
+                0,
+                WINEVENT_OUTOFCONTEXT
+            );
+
+            g_hHookHide = SetWinEventHook(
+                EVENT_OBJECT_HIDE,
+                EVENT_OBJECT_HIDE,
+                NULL,
+                ShowHideWinEventProc,
+                explorerPid,
+                0,
+                WINEVENT_OUTOFCONTEXT
+            );
         }
     }
 
-    g_hHookFore = SetWinEventHook(
-        EVENT_SYSTEM_FOREGROUND,
-        EVENT_SYSTEM_FOREGROUND,
+    g_hHookCreate = SetWinEventHook(
+        EVENT_OBJECT_CREATE,
+        EVENT_OBJECT_CREATE,
         NULL,
-        ForegroundWinEventProc,
+        CreateWinEventProc,
         0,
         0,
         WINEVENT_OUTOFCONTEXT
@@ -100,6 +166,8 @@ void InitTaskbarHooks(HWND hWnd) {
 }
 
 void CleanupTaskbarHooks() {
-    if (g_hHookFore) { UnhookWinEvent(g_hHookFore); g_hHookFore = NULL; }
-    if (g_hHookLoc)  { UnhookWinEvent(g_hHookLoc);  g_hHookLoc = NULL; }
+    if (g_hHookLoc)    { UnhookWinEvent(g_hHookLoc);    g_hHookLoc = NULL; }
+    if (g_hHookShow)   { UnhookWinEvent(g_hHookShow);   g_hHookShow = NULL; }
+    if (g_hHookHide)   { UnhookWinEvent(g_hHookHide);   g_hHookHide = NULL; }
+    if (g_hHookCreate) { UnhookWinEvent(g_hHookCreate); g_hHookCreate = NULL; }
 }

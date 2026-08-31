@@ -1,5 +1,6 @@
 #include "Common.h"
 #include "Config.h"
+#include <wchar.h>
 #include "Theme.h"
 #include "Metrics.h"
 #include "Renderer.h"
@@ -12,11 +13,8 @@ NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == g_uTaskbarCreatedMsg) {
-        g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
-        if (g_hTaskbar) {
-            SetWindowLongPtr(hWnd, GWLP_HWNDPARENT, (LONG_PTR)g_hTaskbar);
-            SyncWithTaskbar(hWnd);
-        }
+        AttachToTaskbar(hWnd);
+        SyncWithTaskbar(hWnd);
         return 0;
     }
 
@@ -27,7 +25,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         UpdateThemeColors();
         InitMetrics();
         SetTimer(hWnd, TIMER_METRICS, g_config.refreshRateMs, NULL);
-        SetTimer(hWnd, TIMER_FAST_SYNC, 35, NULL);
+        AttachToTaskbar(hWnd);
+        SyncWithTaskbar(hWnd);
         break;
 
     case WM_LBUTTONDBLCLK:
@@ -36,15 +35,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
         }
         break;
-
-    case WM_WINDOWPOSCHANGING: {
-        WINDOWPOS* pwp = (WINDOWPOS*)lParam;
-        if (pwp) {
-            pwp->hwndInsertAfter = HWND_TOPMOST;
-            pwp->flags |= SWP_NOACTIVATE;
-        }
-        break;
-    }
 
     case WM_TRAYICON: {
         if (lParam == WM_RBUTTONUP) {
@@ -96,8 +86,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == TIMER_METRICS) {
             UpdateAllMetrics();
             InvalidateRect(hWnd, NULL, FALSE);
-        } else if (wParam == TIMER_FAST_SYNC) {
-            SyncWithTaskbar(hWnd);
         }
         break;
 
@@ -112,7 +100,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         KillTimer(hWnd, TIMER_METRICS);
-        KillTimer(hWnd, TIMER_FAST_SYNC);
         CleanupTaskbarHooks();
         CleanupMetrics();
         CloseSettingsWindow();
@@ -139,7 +126,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassExW(&wc);
 
-    DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+    DWORD style = g_hTaskbar ? (WS_CHILD | WS_CLIPSIBLINGS) : WS_POPUP;
+    DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
     if (g_config.clickThrough) {
         exStyle |= WS_EX_TRANSPARENT;
     }
@@ -148,18 +136,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
         exStyle,
         wc.lpszClassName,
         L"TaskbarMonitor",
-        WS_POPUP,
+        style,
         0, 0, g_curWidth, MONITOR_HEIGHT,
-        NULL,
+        g_hTaskbar,
         NULL, hInstance, NULL
     );
 
     if (!g_hWnd) return 0;
 
-    if (g_hTaskbar) {
-        SetWindowLongPtr(g_hWnd, GWLP_HWNDPARENT, (LONG_PTR)g_hTaskbar);
-    }
-
+    AttachToTaskbar(g_hWnd);
     SetLayeredWindowAttributes(g_hWnd, COLOR_TRANSPARENT_KEY, 0, LWA_COLORKEY);
 
     BOOL excludeFromPeek = TRUE;
@@ -175,11 +160,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
     InitTaskbarHooks(g_hWnd);
-
     UpdateAllMetrics();
     SyncWithTaskbar(g_hWnd);
     ShowWindow(g_hWnd, SW_SHOWNOACTIVATE);
     UpdateWindow(g_hWnd);
+
+    bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);
+    if (!bAutoStart) {
+        wchar_t prompt[300];
+        swprintf(prompt, 300,
+            L"Update the Windows startup entry to point to this copy of TaskbarMonitor?\r\n\r\n"
+            L"This makes it launch automatically every time Windows starts.\r\n"
+            L"You can change this later in Settings (Advanced tab).");
+        int choice = MessageBoxW(g_hWnd, prompt, L"TaskbarMonitor",
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1);
+        if (choice == IDYES) {
+            g_config.runAtStartup = true;
+            SetAutostart(true);
+        }
+    }
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {

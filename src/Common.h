@@ -22,6 +22,7 @@
 #include <pdhmsg.h>
 #include <psapi.h>
 #include <shellapi.h>
+#include <wbemidl.h>
 #include <stdio.h>
 #include <tchar.h>
 #include <math.h>
@@ -36,11 +37,10 @@
 #define DWMWA_EXCLUDED_FROM_PEEK 12
 #endif
 
-#define MONITOR_HEIGHT 32
+#define MONITOR_HEIGHT 36
 #define COLOR_TRANSPARENT_KEY RGB(1, 1, 1)
 
 #define TIMER_METRICS 1
-#define TIMER_FAST_SYNC 2
 #define WM_TRAYICON (WM_USER + 1)
 
 // Menu Commands
@@ -60,6 +60,8 @@
 #define IDC_CHK_BATTERY      1006
 #define IDC_CHK_UPTIME       1007
 #define IDC_CHK_PROCESS      1008
+#define IDC_CHK_CPUTEMP      1009
+#define IDC_CHK_GPUTEMP      1017
 
 #define IDC_COMBO_DRIVE      1010
 #define IDC_COMBO_NETUNIT    1011

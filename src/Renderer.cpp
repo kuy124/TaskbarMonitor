@@ -28,25 +28,24 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
     HFONT hFontLabel = CreateFontW(fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+        ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
 
     HFONT hFontValue = CreateFontW(fontHeight, 0, 0, 0, g_config.fontWeight, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+        ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
 
     HDC measureDC = CreateCompatibleDC(hdc);
     HGDIOBJ oldMFont = SelectObject(measureDC, hFontValue);
     TEXTMETRIC tm;
     GetTextMetricsW(measureDC, &tm);
 
-    int row1Y = (MONITOR_HEIGHT / 2) - tm.tmHeight + 1;
-    int row2Y = (MONITOR_HEIGHT / 2);
-    if (row1Y < 0) row1Y = 0;
-    int centerY = (MONITOR_HEIGHT - tm.tmHeight) / 2;
+    int row1Y = 2;
+    int row2Y = MONITOR_HEIGHT - 2 - tm.tmHeight;
+    if (row2Y < row1Y) row2Y = row1Y;
 
     std::vector<MetricColumn> columns;
 
-    // Network Column (Clean arrow + full speed units)
+    // 1. Network Column
     if (g_config.showNet) {
         MetricColumn col;
         col.isNet = true;
@@ -59,7 +58,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // CPU / GPU Column
+    // 2. CPU / GPU Load Column (%)
     if (g_config.showCPU || g_config.showGPU) {
         MetricColumn col;
         col.isNet = false;
@@ -90,7 +89,38 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // RAM Column
+    // 3. CPU & GPU Heat Column (°C) — Replaces PRC & BAT
+    if (g_config.showCPUTemp || g_config.showGPUTemp) {
+        MetricColumn col;
+        col.isNet = false;
+        if (g_config.showCPUTemp && g_config.showGPUTemp) {
+            col.hasRow2 = true;
+            wcscpy_s(col.row1.label, L"C°");
+            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            col.row1.colLabel = g_theme.label;
+            col.row1.colValue = g_theme.value;
+
+            wcscpy_s(col.row2.label, L"G°");
+            swprintf(col.row2.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            col.row2.colLabel = g_theme.label;
+            col.row2.colValue = g_theme.value;
+        } else if (g_config.showCPUTemp) {
+            col.hasRow2 = false;
+            wcscpy_s(col.row1.label, L"C°");
+            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            col.row1.colLabel = g_theme.label;
+            col.row1.colValue = g_theme.value;
+        } else {
+            col.hasRow2 = false;
+            wcscpy_s(col.row1.label, L"G°");
+            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            col.row1.colLabel = g_theme.label;
+            col.row1.colValue = g_theme.value;
+        }
+        columns.push_back(col);
+    }
+
+    // 4. RAM Column
     if (g_config.showRAM) {
         MetricColumn col;
         col.isNet = false;
@@ -107,7 +137,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // Disk Column
+    // 5. Disk Column
     if (g_config.showDisk) {
         MetricColumn col;
         col.isNet = false;
@@ -125,7 +155,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // Dynamic System Metrics
+    // 6. Optional System Metrics (Uptime, Process, Battery)
     std::vector<MetricRow> sysRows;
     if (g_config.showProcess) {
         MetricRow r;
@@ -229,10 +259,15 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
     auto DrawDivider = [&](int x) {
         if (!g_config.showDividers) return;
+        int divTop = row1Y - 1;
+        if (divTop < 0) divTop = 0;
+        int divBottom = row2Y + tm.tmHeight;
+        if (divBottom >= MONITOR_HEIGHT) divBottom = MONITOR_HEIGHT - 1;
+        if (divBottom <= divTop) return;
         HPEN dividerPen = CreatePen(PS_SOLID, 1, g_theme.divider);
         HGDIOBJ oldDivPen = SelectObject(memDC, dividerPen);
-        MoveToEx(memDC, x, 5, NULL);
-        LineTo(memDC, x, MONITOR_HEIGHT - 5);
+        MoveToEx(memDC, x, divTop, NULL);
+        LineTo(memDC, x, divBottom);
         SelectObject(memDC, oldDivPen);
         DeleteObject(dividerPen);
     };
@@ -274,11 +309,11 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
             } else {
                 SelectObject(memDC, hFontLabel);
                 SetTextColor(memDC, columns[i].row1.colLabel);
-                TextOutW(memDC, curX, centerY, columns[i].row1.label, (int)wcslen(columns[i].row1.label));
+                TextOutW(memDC, curX, row1Y, columns[i].row1.label, (int)wcslen(columns[i].row1.label));
 
                 SelectObject(memDC, hFontValue);
                 SetTextColor(memDC, columns[i].row1.colValue);
-                TextOutW(memDC, valX, centerY, columns[i].row1.value, (int)wcslen(columns[i].row1.value));
+                TextOutW(memDC, valX, row1Y, columns[i].row1.value, (int)wcslen(columns[i].row1.value));
             }
         }
 

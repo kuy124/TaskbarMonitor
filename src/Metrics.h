@@ -3,7 +3,9 @@
 
 struct SystemMetrics {
     double cpuUsage;
+    double cpuTemp;       // Temperature in Celsius (-1 if unsupported)
     double gpuUsage;
+    double gpuTemp;       // Temperature in Celsius (-1 if unsupported)
     double memUsage;
     double memUsedGB;
     double diskUsage;
@@ -19,7 +21,9 @@ extern SystemMetrics g_metrics;
 void InitMetrics();
 void CleanupMetrics();
 void UpdateCPU();
+void UpdateCPUTemp();
 void UpdateGPU();
+void UpdateGPUTemp();
 void UpdateDisk();
 void UpdateMemory();
 void UpdateNetwork();

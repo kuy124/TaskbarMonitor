@@ -24,7 +24,9 @@ struct MonitorConfig {
     // Metric Visibility
     bool showNet;
     bool showCPU;
+    bool showCPUTemp;
     bool showGPU;
+    bool showGPUTemp;
     bool showRAM;
     bool showDisk;
     bool showBattery;

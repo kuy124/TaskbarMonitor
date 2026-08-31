@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(TaskbarMonitor LANGUAGES CXX)
+project(TaskbarMonitor LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,7 @@ set(SOURCES
     src/SettingsWindow.h
     src/SettingsWindow.cpp
     src/Main.cpp
+    src/TaskbarMonitor.rc
 )
 
 add_executable(TaskbarMonitor WIN32 ${SOURCES})
@@ -36,6 +37,9 @@ target_link_libraries(TaskbarMonitor PRIVATE
     shell32
     comctl32
     comdlg32
+    ole32
+    oleaut32
+    wbemuuid
 )
 
 if (MINGW)

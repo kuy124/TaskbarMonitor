@@ -1,7 +1,7 @@
 #include "Config.h"
 
 MonitorConfig g_config;
-int g_curWidth = 410;
+int g_curWidth = 430;
 
 #define CONFIG_KEY L"Software\\TaskbarMonitor"
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -11,11 +11,13 @@ void SetDefaults() {
     g_config.showNet         = true;
     g_config.showCPU         = true;
     g_config.showGPU         = true;
+    g_config.showCPUTemp     = true;  // Replaces PRC
+    g_config.showGPUTemp     = true;  // Replaces BAT
     g_config.showRAM         = true;
     g_config.showDisk        = true;
-    g_config.showBattery     = true;
     g_config.showUptime      = true;
-    g_config.showProcess     = true;
+    g_config.showProcess     = false; // Replaced by CPU Heat
+    g_config.showBattery     = false; // Replaced by GPU Heat
     wcscpy_s(g_config.targetDrive, L"C:\\");
 
     g_config.alignment       = ALIGN_LEFT;
@@ -71,7 +73,9 @@ void LoadConfig() {
 
         ReadBool(L"ShowNet", g_config.showNet);
         ReadBool(L"ShowCPU", g_config.showCPU);
+        ReadBool(L"ShowCPUTemp", g_config.showCPUTemp);
         ReadBool(L"ShowGPU", g_config.showGPU);
+        ReadBool(L"ShowGPUTemp", g_config.showGPUTemp);
         ReadBool(L"ShowRAM", g_config.showRAM);
         ReadBool(L"ShowDisk", g_config.showDisk);
         ReadBool(L"ShowBattery", g_config.showBattery);
@@ -123,7 +127,9 @@ void SaveConfig() {
 
         WriteBool(L"ShowNet", g_config.showNet);
         WriteBool(L"ShowCPU", g_config.showCPU);
+        WriteBool(L"ShowCPUTemp", g_config.showCPUTemp);
         WriteBool(L"ShowGPU", g_config.showGPU);
+        WriteBool(L"ShowGPUTemp", g_config.showGPUTemp);
         WriteBool(L"ShowRAM", g_config.showRAM);
         WriteBool(L"ShowDisk", g_config.showDisk);
         WriteBool(L"ShowBattery", g_config.showBattery);
@@ -160,7 +166,7 @@ void SaveConfig() {
     SetAutostart(g_config.runAtStartup);
 }
 
-int CalculateTotalWidth(HDC hdc) {
+int CalculateTotalWidth(HDC) {
     int colCount = 0;
     int w = 22;
 
@@ -173,6 +179,10 @@ int CalculateTotalWidth(HDC hdc) {
     if (g_config.showCPU || g_config.showGPU) { 
         w += (68 + fontScale); 
         colCount++; 
+    }
+    if (g_config.showCPUTemp || g_config.showGPUTemp) {
+        w += (68 + fontScale);
+        colCount++;
     }
     if (g_config.showRAM) { 
         w += (74 + fontScale); 
