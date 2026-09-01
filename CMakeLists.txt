@@ -20,6 +20,8 @@ set(SOURCES
     src/TaskbarSync.cpp
     src/SettingsWindow.h
     src/SettingsWindow.cpp
+    src/License.h
+    src/License.cpp
     src/Main.cpp
     src/TaskbarMonitor.rc
 )
