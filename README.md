@@ -17,8 +17,6 @@ Each metric updates at your chosen polling rate and renders as a two-row overlay
 | GPU Temp | Degrees Celsius | NVML, NVAPI, AMD ADL, or synthetic estimate |
 | RAM | Usage % and used GB | `GlobalMemoryStatusEx` |
 | Disk | Activity % and free space | PDH disk time + `GetDiskFreeSpaceExW` |
-| Processes | Total count | `GetPerformanceInfo` |
-| Battery | Charge % | `GetSystemPowerStatus` |
 | Uptime | Hours and minutes | `GetTickCount64` |
 
 **Temperature fallbacks**: When no hardware sensor is exposed, CPU and GPU temperatures fall back to synthetic estimates based on load (`38 + cpuUsage * 0.42` for CPU, `36 + gpuUsage * 0.38` for GPU). The display always shows a value, but those numbers come from math, not sensors, on systems without exposed thermal zones.
@@ -31,7 +29,7 @@ Each metric updates at your chosen polling rate and renders as a two-row overlay
 
 1. Grab `TaskbarMonitor.exe` from the [Releases](https://github.com/) page.
 2. Drop it anywhere. `C:\Tools\` works. Your Downloads folder works.
-3. Run it. It asks whether you want it to start with Windows. Say yes unless you plan to launch it manually each session.
+3. Run it. The first launch shows the release license agreement. Read it, click **I Agree**, and it then asks whether you want it to start with Windows. Say yes unless you plan to launch it manually each session.
 
 The exe stores all settings in `HKCU\Software\TaskbarMonitor`. No files outside your install folder. No services.
 
@@ -44,8 +42,6 @@ Double-click the tray icon or right-click and pick **Settings**.
 ### Metrics Tab
 
 Toggle any metric on or off. Pick which drive to monitor for disk stats. Choose network speed units (Bytes or Bits).
-
-CPU and GPU temperature replace the process count and battery columns when enabled, since the overlay only has so much room.
 
 ### Layout Tab
 
@@ -173,6 +169,7 @@ TaskbarMonitor/
 │   ├── Renderer.h/.cpp       # Double-buffered GDI overlay
 │   ├── TaskbarSync.h/.cpp    # Position calculation, shell event hooks
 │   ├── SettingsWindow.h/.cpp # Win32 settings dialog
+│   ├── License.h/.cpp        # First-run license agreement dialog
 │   └── Main.cpp              # Entry point, tray icon, message loop
 ├── CMakeLists.txt
 ├── Makefile
