@@ -89,7 +89,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // 3. CPU & GPU Heat Column (°C) — Replaces PRC & BAT
+    // 3. CPU & GPU Heat Column (°C)
     if (g_config.showCPUTemp || g_config.showGPUTemp) {
         MetricColumn col;
         col.isNet = false;
@@ -155,24 +155,8 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // 6. Optional System Metrics (Uptime, Process, Battery)
+    // 6. Optional System Metrics (Uptime)
     std::vector<MetricRow> sysRows;
-    if (g_config.showProcess) {
-        MetricRow r;
-        wcscpy_s(r.label, L"PRC");
-        swprintf(r.value, 32, L"%lu", g_metrics.processCount);
-        r.colLabel = g_theme.label;
-        r.colValue = g_theme.value;
-        sysRows.push_back(r);
-    }
-    if (g_config.showBattery && g_metrics.batteryPercent >= 0) {
-        MetricRow r;
-        wcscpy_s(r.label, L"BAT");
-        swprintf(r.value, 32, L"%d%%", g_metrics.batteryPercent);
-        r.colLabel = g_theme.label;
-        r.colValue = g_theme.value;
-        sysRows.push_back(r);
-    }
     if (g_config.showUptime) {
         MetricRow r;
         wcscpy_s(r.label, L"UP");
