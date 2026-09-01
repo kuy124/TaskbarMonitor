@@ -57,9 +57,7 @@
 #define IDC_CHK_GPU          1003
 #define IDC_CHK_RAM          1004
 #define IDC_CHK_DISK         1005
-#define IDC_CHK_BATTERY      1006
 #define IDC_CHK_UPTIME       1007
-#define IDC_CHK_PROCESS      1008
 #define IDC_CHK_CPUTEMP      1009
 #define IDC_CHK_GPUTEMP      1017
 
