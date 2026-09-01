@@ -117,7 +117,7 @@ static void ShowTabControls(HWND hWnd, int tabIndex) {
 
     const int tab0Controls[] = { 
         IDC_CHK_NET, IDC_CHK_CPU, IDC_CHK_GPU, IDC_CHK_CPUTEMP, IDC_CHK_GPUTEMP, 
-        IDC_CHK_RAM, IDC_CHK_DISK, IDC_CHK_UPTIME, IDC_CHK_PROCESS, IDC_CHK_BATTERY, 
+        IDC_CHK_RAM, IDC_CHK_DISK, IDC_CHK_UPTIME,
         IDC_LBL_DRIVE, IDC_COMBO_DRIVE, IDC_LBL_NETUNIT, IDC_COMBO_NETUNIT, 0 
     };
     const int tab1Controls[] = { 
@@ -167,8 +167,6 @@ static void ApplyCurrentSettings(HWND hWnd) {
     g_config.showRAM         = (IsDlgButtonChecked(hWnd, IDC_CHK_RAM) == BST_CHECKED);
     g_config.showDisk        = (IsDlgButtonChecked(hWnd, IDC_CHK_DISK) == BST_CHECKED);
     g_config.showUptime      = (IsDlgButtonChecked(hWnd, IDC_CHK_UPTIME) == BST_CHECKED);
-    g_config.showProcess     = (IsDlgButtonChecked(hWnd, IDC_CHK_PROCESS) == BST_CHECKED);
-    g_config.showBattery     = (IsDlgButtonChecked(hWnd, IDC_CHK_BATTERY) == BST_CHECKED);
     g_config.showDividers    = (IsDlgButtonChecked(hWnd, IDC_CHK_DIVIDERS) == BST_CHECKED);
     g_config.transparentBg   = (IsDlgButtonChecked(hWnd, IDC_CHK_TRANS_BG) == BST_CHECKED);
     g_config.autoContrast    = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOCONTRAST) == BST_CHECKED);
@@ -273,13 +271,11 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"BUTTON", L"Network Speed (Upload / Download)", WS_CHILD | BS_AUTOCHECKBOX, 36, 56, 390, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 80, 390, 20, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 104, 390, 20, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"CPU Heat (°C)  [Replaces PRC]", WS_CHILD | BS_AUTOCHECKBOX, 36, 128, 390, 20, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"GPU Heat (°C)  [Replaces BAT]", WS_CHILD | BS_AUTOCHECKBOX, 36, 152, 390, 20, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"CPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 128, 390, 20, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"GPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 152, 390, 20, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM % and Used GB)", WS_CHILD | BS_AUTOCHECKBOX, 36, 176, 390, 20, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Storage Activity and Free Space", WS_CHILD | BS_AUTOCHECKBOX, 36, 200, 390, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 36, 224, 390, 20, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Total Process Count (PRC)", WS_CHILD | BS_AUTOCHECKBOX, 36, 248, 390, 20, hWnd, (HMENU)IDC_CHK_PROCESS, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Battery Percentage (BAT)", WS_CHILD | BS_AUTOCHECKBOX, 36, 272, 390, 20, hWnd, (HMENU)IDC_CHK_BATTERY, NULL, NULL);
 
         CreateWindowExW(0, L"STATIC", L"Storage Target Drive:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 304, 160, 20, hWnd, (HMENU)IDC_LBL_DRIVE, NULL, NULL);
         HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 220, 300, 110, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
@@ -356,8 +352,6 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CheckDlgButton(hWnd, IDC_CHK_RAM, g_config.showRAM ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_DISK, g_config.showDisk ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_UPTIME, g_config.showUptime ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_PROCESS, g_config.showProcess ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_BATTERY, g_config.showBattery ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_DIVIDERS, g_config.showDividers ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_TRANS_BG, g_config.transparentBg ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_AUTOCONTRAST, g_config.autoContrast ? BST_CHECKED : BST_UNCHECKED);
