@@ -1,6 +1,8 @@
 #pragma once
 #include "Common.h"
 
+#define CONFIG_REGISTRY_KEY L"Software\\TaskbarMonitor"
+
 enum TaskbarAlignment {
     ALIGN_LEFT = 0,
     ALIGN_RIGHT = 1,
@@ -29,9 +31,7 @@ struct MonitorConfig {
     bool showGPUTemp;
     bool showRAM;
     bool showDisk;
-    bool showBattery;
     bool showUptime;
-    bool showProcess;
 
     // Storage
     wchar_t targetDrive[8];
