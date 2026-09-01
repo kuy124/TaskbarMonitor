@@ -9,6 +9,7 @@ SRCS = src/Config.cpp \
        src/Renderer.cpp \
        src/TaskbarSync.cpp \
        src/SettingsWindow.cpp \
+       src/License.cpp \
        src/Main.cpp
 
 OBJS = $(SRCS:.cpp=.o) src/TaskbarMonitor.res.o
