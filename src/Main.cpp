@@ -6,6 +6,7 @@
 #include "Renderer.h"
 #include "TaskbarSync.h"
 #include "SettingsWindow.h"
+#include "License.h"
 
 HWND g_hWnd = NULL;
 UINT g_uTaskbarCreatedMsg = 0;
@@ -115,6 +116,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     INITCOMMONCONTROLSEX icex = { sizeof(INITCOMMONCONTROLSEX), ICC_STANDARD_CLASSES | ICC_TAB_CLASSES };
     InitCommonControlsEx(&icex);
+
+    if (!ShowLicenseDialog(hInstance)) {
+        return 0;
+    }
 
     g_uTaskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
     g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
