@@ -1,7 +1,7 @@
 #include "Metrics.h"
 #include "Config.h"
 
-SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0, -1, 0.0, 0.0 };
+SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 
 static FILETIME g_prevIdleTime = {0}, g_prevKernelTime = {0}, g_prevUserTime = {0};
 static PDH_HQUERY g_hPdhQuery = NULL;
@@ -334,26 +334,6 @@ void UpdateDisk() {
     }
 }
 
-void UpdateSystemStats() {
-    if (g_config.showProcess) {
-        PERFORMANCE_INFORMATION pi = { sizeof(PERFORMANCE_INFORMATION) };
-        if (GetPerformanceInfo(&pi, sizeof(pi))) {
-            g_metrics.processCount = pi.ProcessCount;
-        }
-    }
-
-    if (g_config.showBattery) {
-        SYSTEM_POWER_STATUS sps;
-        if (GetSystemPowerStatus(&sps)) {
-            if (sps.BatteryLifePercent != 255 && sps.BatteryFlag != 128) {
-                g_metrics.batteryPercent = sps.BatteryLifePercent;
-            } else {
-                g_metrics.batteryPercent = -1;
-            }
-        }
-    }
-}
-
 void UpdateCPU() {
     if (!g_config.showCPU && !g_config.showCPUTemp) return;
 
@@ -432,7 +412,6 @@ void UpdateAllMetrics() {
     UpdateDisk();
     UpdateMemory();
     UpdateNetwork();
-    UpdateSystemStats();
 }
 
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
