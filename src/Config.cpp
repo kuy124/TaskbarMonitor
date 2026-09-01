@@ -3,7 +3,7 @@
 MonitorConfig g_config;
 int g_curWidth = 430;
 
-#define CONFIG_KEY L"Software\\TaskbarMonitor"
+#define CONFIG_KEY CONFIG_REGISTRY_KEY
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_NAME   L"TaskbarMonitor"
 
@@ -11,13 +11,11 @@ void SetDefaults() {
     g_config.showNet         = true;
     g_config.showCPU         = true;
     g_config.showGPU         = true;
-    g_config.showCPUTemp     = true;  // Replaces PRC
-    g_config.showGPUTemp     = true;  // Replaces BAT
+    g_config.showCPUTemp     = true;
+    g_config.showGPUTemp     = true;
     g_config.showRAM         = true;
     g_config.showDisk        = true;
     g_config.showUptime      = true;
-    g_config.showProcess     = false; // Replaced by CPU Heat
-    g_config.showBattery     = false; // Replaced by GPU Heat
     wcscpy_s(g_config.targetDrive, L"C:\\");
 
     g_config.alignment       = ALIGN_LEFT;
@@ -78,9 +76,7 @@ void LoadConfig() {
         ReadBool(L"ShowGPUTemp", g_config.showGPUTemp);
         ReadBool(L"ShowRAM", g_config.showRAM);
         ReadBool(L"ShowDisk", g_config.showDisk);
-        ReadBool(L"ShowBattery", g_config.showBattery);
         ReadBool(L"ShowUptime", g_config.showUptime);
-        ReadBool(L"ShowProcess", g_config.showProcess);
 
         ReadDword(L"Alignment", g_config.alignment);
         ReadDword(L"OffsetX", g_config.offsetX);
@@ -132,9 +128,7 @@ void SaveConfig() {
         WriteBool(L"ShowGPUTemp", g_config.showGPUTemp);
         WriteBool(L"ShowRAM", g_config.showRAM);
         WriteBool(L"ShowDisk", g_config.showDisk);
-        WriteBool(L"ShowBattery", g_config.showBattery);
         WriteBool(L"ShowUptime", g_config.showUptime);
-        WriteBool(L"ShowProcess", g_config.showProcess);
 
         WriteDword(L"Alignment", (DWORD)g_config.alignment);
         WriteDword(L"OffsetX", (DWORD)g_config.offsetX);
@@ -194,8 +188,6 @@ int CalculateTotalWidth(HDC) {
     }
 
     int sysCount = 0;
-    if (g_config.showProcess) sysCount++;
-    if (g_config.showBattery) sysCount++;
     if (g_config.showUptime)  sysCount++;
 
     int sysCols = (sysCount + 1) / 2;
@@ -211,30 +203,44 @@ int CalculateTotalWidth(HDC) {
 }
 
 bool IsAutostartEnabled() {
-    HKEY hKey;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        wchar_t buffer[MAX_PATH * 2] = {0};
-        DWORD size = sizeof(buffer);
-        LONG res = RegQueryValueExW(hKey, APP_NAME, NULL, NULL, (LPBYTE)buffer, &size);
-        RegCloseKey(hKey);
-        return (res == ERROR_SUCCESS);
+    wchar_t exePath[MAX_PATH] = { 0 };
+    if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0) return false;
+
+    HKEY hKey = NULL;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return false;
     }
-    return false;
+
+    wchar_t buffer[MAX_PATH * 2] = { 0 };
+    DWORD size = sizeof(buffer);
+    LONG res = RegQueryValueExW(hKey, APP_NAME, NULL, NULL, (LPBYTE)buffer, &size);
+    RegCloseKey(hKey);
+    if (res != ERROR_SUCCESS) return false;
+
+    wchar_t expected[MAX_PATH * 2] = { 0 };
+    swprintf(expected, MAX_PATH * 2, L"\"%ls\"", exePath);
+    return (wcsstr(buffer, expected) != NULL);
 }
 
 void SetAutostart(bool enable) {
-    HKEY hKey;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-        if (enable) {
-            wchar_t exePath[MAX_PATH] = {0};
-            GetModuleFileNameW(NULL, exePath, MAX_PATH);
-
-            wchar_t cmd[MAX_PATH * 2] = {0};
-            swprintf(cmd, MAX_PATH * 2, L"\"%ls\" --autostart", exePath);
-            RegSetValueExW(hKey, APP_NAME, 0, REG_SZ, (const BYTE*)cmd, (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t)));
-        } else {
-            RegDeleteValueW(hKey, APP_NAME);
-        }
-        RegCloseKey(hKey);
+    HKEY hKey = NULL;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        return;
     }
+
+    if (enable) {
+        wchar_t exePath[MAX_PATH] = { 0 };
+        if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0) {
+            RegCloseKey(hKey);
+            return;
+        }
+
+        wchar_t cmd[MAX_PATH * 2] = { 0 };
+        swprintf(cmd, MAX_PATH * 2, L"\"%ls\" --autostart", exePath);
+        DWORD cb = (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t));
+        RegSetValueExW(hKey, APP_NAME, 0, REG_SZ, (const BYTE*)cmd, cb);
+    } else {
+        RegDeleteValueW(hKey, APP_NAME);
+    }
+    RegCloseKey(hKey);
 }
