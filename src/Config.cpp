@@ -170,7 +170,7 @@ int CalculateTotalWidth(HDC) {
     int fontScale = g_config.fontSize > 11 ? (g_config.fontSize - 11) * 6 : 0;
 
     if (g_config.showNet) { 
-        w += (88 + fontScale); 
+        w += (96 + fontScale); 
         colCount++; 
     }
     if (g_config.showCPU || g_config.showGPU) { 
