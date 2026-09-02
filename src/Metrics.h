@@ -28,5 +28,6 @@ void UpdateGPUTemp();
 void UpdateDisk();
 void UpdateMemory();
 void UpdateNetwork();
+void UpdateBattery();
 void UpdateAllMetrics();
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size);
