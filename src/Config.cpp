@@ -15,6 +15,7 @@ void SetDefaults() {
     g_config.showGPUTemp     = true;
     g_config.showRAM         = true;
     g_config.showDisk        = true;
+    g_config.showBattery     = true;
     g_config.showUptime      = true;
     wcscpy_s(g_config.targetDrive, L"C:\\");
 
@@ -76,6 +77,7 @@ void LoadConfig() {
         ReadBool(L"ShowGPUTemp", g_config.showGPUTemp);
         ReadBool(L"ShowRAM", g_config.showRAM);
         ReadBool(L"ShowDisk", g_config.showDisk);
+        ReadBool(L"ShowBattery", g_config.showBattery);
         ReadBool(L"ShowUptime", g_config.showUptime);
 
         ReadDword(L"Alignment", g_config.alignment);
@@ -128,6 +130,7 @@ void SaveConfig() {
         WriteBool(L"ShowGPUTemp", g_config.showGPUTemp);
         WriteBool(L"ShowRAM", g_config.showRAM);
         WriteBool(L"ShowDisk", g_config.showDisk);
+        WriteBool(L"ShowBattery", g_config.showBattery);
         WriteBool(L"ShowUptime", g_config.showUptime);
 
         WriteDword(L"Alignment", (DWORD)g_config.alignment);
@@ -188,6 +191,7 @@ int CalculateTotalWidth(HDC) {
     }
 
     int sysCount = 0;
+    if (g_config.showBattery) sysCount++;
     if (g_config.showUptime)  sysCount++;
 
     int sysCols = (sysCount + 1) / 2;
