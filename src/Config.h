@@ -31,6 +31,7 @@ struct MonitorConfig {
     bool showGPUTemp;
     bool showRAM;
     bool showDisk;
+    bool showBattery;
     bool showUptime;
 
     // Storage
