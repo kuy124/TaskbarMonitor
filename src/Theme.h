@@ -11,5 +11,6 @@ struct ThemeColors {
 };
 
 extern ThemeColors g_theme;
+extern COLORREF g_transparentKey;
 
 void UpdateThemeColors();

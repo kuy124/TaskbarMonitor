@@ -76,9 +76,9 @@ static void UpdateSettingsTheme(HWND hWnd) {
         s_colWindowBg      = RGB(242, 242, 246);
         s_colCardBg        = RGB(255, 255, 255);
         s_colControlBg     = RGB(245, 245, 248);
-        s_colBorder        = RGB(220, 222, 228);
-        s_colTextPrimary   = RGB(20, 20, 25);
-        s_colTextSecondary = RGB(95, 100, 110);
+        s_colBorder        = RGB(218, 220, 226);
+        s_colTextPrimary   = RGB(15, 18, 24);
+        s_colTextSecondary = RGB(85, 90, 100);
         s_colAccent        = RGB(0, 105, 195);
     }
 
@@ -117,7 +117,7 @@ static void ShowTabControls(HWND hWnd, int tabIndex) {
 
     const int tab0Controls[] = { 
         IDC_CHK_NET, IDC_CHK_CPU, IDC_CHK_GPU, IDC_CHK_CPUTEMP, IDC_CHK_GPUTEMP, 
-        IDC_CHK_RAM, IDC_CHK_DISK, IDC_CHK_UPTIME,
+        IDC_CHK_RAM, IDC_CHK_DISK, IDC_CHK_BATTERY, IDC_CHK_UPTIME,
         IDC_LBL_DRIVE, IDC_COMBO_DRIVE, IDC_LBL_NETUNIT, IDC_COMBO_NETUNIT, 0 
     };
     const int tab1Controls[] = { 
@@ -166,6 +166,7 @@ static void ApplyCurrentSettings(HWND hWnd) {
     g_config.showGPUTemp     = (IsDlgButtonChecked(hWnd, IDC_CHK_GPUTEMP) == BST_CHECKED);
     g_config.showRAM         = (IsDlgButtonChecked(hWnd, IDC_CHK_RAM) == BST_CHECKED);
     g_config.showDisk        = (IsDlgButtonChecked(hWnd, IDC_CHK_DISK) == BST_CHECKED);
+    g_config.showBattery     = (IsDlgButtonChecked(hWnd, IDC_CHK_BATTERY) == BST_CHECKED);
     g_config.showUptime      = (IsDlgButtonChecked(hWnd, IDC_CHK_UPTIME) == BST_CHECKED);
     g_config.showDividers    = (IsDlgButtonChecked(hWnd, IDC_CHK_DIVIDERS) == BST_CHECKED);
     g_config.transparentBg   = (IsDlgButtonChecked(hWnd, IDC_CHK_TRANS_BG) == BST_CHECKED);
@@ -268,20 +269,21 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         }
 
         // --- TAB 0: Metrics ---
-        CreateWindowExW(0, L"BUTTON", L"Network Speed (Upload / Download)", WS_CHILD | BS_AUTOCHECKBOX, 36, 56, 390, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 80, 390, 20, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 104, 390, 20, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"CPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 128, 390, 20, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"GPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 152, 390, 20, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM % and Used GB)", WS_CHILD | BS_AUTOCHECKBOX, 36, 176, 390, 20, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Storage Activity and Free Space", WS_CHILD | BS_AUTOCHECKBOX, 36, 200, 390, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 36, 224, 390, 20, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Network Speed (Upload / Download)", WS_CHILD | BS_AUTOCHECKBOX, 36, 52, 390, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 74, 390, 20, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 96, 390, 20, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"CPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 118, 390, 20, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"GPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 140, 390, 20, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM % and Used GB)", WS_CHILD | BS_AUTOCHECKBOX, 36, 162, 390, 20, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Storage Activity and Free Space", WS_CHILD | BS_AUTOCHECKBOX, 36, 184, 390, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Battery Percentage and AC Status", WS_CHILD | BS_AUTOCHECKBOX, 36, 206, 390, 20, hWnd, (HMENU)IDC_CHK_BATTERY, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 36, 228, 390, 20, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Storage Target Drive:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 304, 160, 20, hWnd, (HMENU)IDC_LBL_DRIVE, NULL, NULL);
-        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 220, 300, 110, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Storage Target Drive:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 280, 160, 20, hWnd, (HMENU)IDC_LBL_DRIVE, NULL, NULL);
+        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 220, 276, 110, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Network Speed Units:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 336, 160, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
-        HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 332, 180, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Network Speed Units:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 314, 160, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
+        HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 310, 180, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
 
         // --- TAB 1: Position and Layout ---
         CreateWindowExW(0, L"STATIC", L"Taskbar Alignment:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 72, 160, 20, hWnd, (HMENU)IDC_LBL_ALIGN, NULL, NULL);
@@ -351,6 +353,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CheckDlgButton(hWnd, IDC_CHK_GPUTEMP, g_config.showGPUTemp ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_RAM, g_config.showRAM ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_DISK, g_config.showDisk ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_BATTERY, g_config.showBattery ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_UPTIME, g_config.showUptime ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_DIVIDERS, g_config.showDividers ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_TRANS_BG, g_config.transparentBg ? BST_CHECKED : BST_UNCHECKED);
@@ -439,7 +442,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
         HGDIOBJ oldBrush = SelectObject(hdc, hCardBrush);
         HGDIOBJ oldPen   = SelectObject(hdc, hCardBorderPen);
-        RoundRect(hdc, 16, 48, 474, 386, 10, 10);
+        RoundRect(hdc, 16, 44, 474, 386, 10, 10);
         SelectObject(hdc, oldBrush);
         SelectObject(hdc, oldPen);
 

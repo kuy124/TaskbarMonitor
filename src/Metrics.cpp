@@ -1,7 +1,7 @@
 #include "Metrics.h"
 #include "Config.h"
 
-SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, false, false };
 
 static FILETIME g_prevIdleTime = {0}, g_prevKernelTime = {0}, g_prevUserTime = {0};
 static PDH_HQUERY g_hPdhQuery = NULL;
@@ -406,12 +406,32 @@ void UpdateNetwork() {
     }
 }
 
+void UpdateBattery() {
+    if (!g_config.showBattery) return;
+
+    SYSTEM_POWER_STATUS sps;
+    if (GetSystemPowerStatus(&sps)) {
+        if (sps.BatteryFlag != 128 && sps.BatteryFlag != 255 && sps.BatteryLifePercent != 255) {
+            g_metrics.hasBattery = true;
+            g_metrics.batteryPercent = (double)sps.BatteryLifePercent;
+            g_metrics.batteryCharging = (sps.BatteryFlag & 8) != 0 || (sps.ACLineStatus == 1 && sps.BatteryLifePercent < 100);
+        } else if (sps.ACLineStatus == 1) {
+            g_metrics.hasBattery = false;
+            g_metrics.batteryPercent = 100.0;
+            g_metrics.batteryCharging = false;
+        } else {
+            g_metrics.hasBattery = false;
+        }
+    }
+}
+
 void UpdateAllMetrics() {
     UpdateCPU();
     UpdateGPU();
     UpdateDisk();
     UpdateMemory();
     UpdateNetwork();
+    UpdateBattery();
 }
 
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {

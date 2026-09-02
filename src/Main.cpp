@@ -150,7 +150,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     if (!g_hWnd) return 0;
 
     AttachToTaskbar(g_hWnd);
-    SetLayeredWindowAttributes(g_hWnd, COLOR_TRANSPARENT_KEY, 0, LWA_COLORKEY);
+    SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
 
     BOOL excludeFromPeek = TRUE;
     DwmSetWindowAttribute(g_hWnd, DWMWA_EXCLUDED_FROM_PEEK, &excludeFromPeek, sizeof(excludeFromPeek));

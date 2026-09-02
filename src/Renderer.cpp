@@ -26,13 +26,13 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
     if (dpiY == 0) dpiY = 96;
     int fontHeight = -MulDiv(g_config.fontSize, dpiY, 72);
 
-    HFONT hFontLabel = CreateFontW(fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT hFontLabel = CreateFontW(fontHeight, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
 
     HFONT hFontValue = CreateFontW(fontHeight, 0, 0, 0, g_config.fontWeight, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, g_config.fontFamily);
 
     HDC measureDC = CreateCompatibleDC(hdc);
     HGDIOBJ oldMFont = SelectObject(measureDC, hFontValue);
@@ -45,7 +45,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
 
     std::vector<MetricColumn> columns;
 
-    // 1. Network Column
+    // 1. Network Column with unambiguous U / D labeling
     if (g_config.showNet) {
         MetricColumn col;
         col.isNet = true;
@@ -53,8 +53,8 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         wchar_t upSpeed[24], dnSpeed[24];
         FormatSpeed(g_metrics.uploadSpeed, upSpeed, 24);
         FormatSpeed(g_metrics.downloadSpeed, dnSpeed, 24);
-        swprintf(col.netLine1, 36, L"▲ %ls", upSpeed);
-        swprintf(col.netLine2, 36, L"▼ %ls", dnSpeed);
+        swprintf(col.netLine1, 36, L"▲ U  %ls", upSpeed);
+        swprintf(col.netLine2, 36, L"▼ D  %ls", dnSpeed);
         columns.push_back(col);
     }
 
@@ -155,8 +155,25 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         columns.push_back(col);
     }
 
-    // 6. Optional System Metrics (Uptime)
+    // 6. Optional System Metrics (Battery & Uptime)
     std::vector<MetricRow> sysRows;
+    if (g_config.showBattery) {
+        MetricRow r;
+        wcscpy_s(r.label, L"BAT");
+        if (g_metrics.hasBattery) {
+            if (g_metrics.batteryCharging) {
+                swprintf(r.value, 32, L"⚡%.0f%%", g_metrics.batteryPercent);
+            } else {
+                swprintf(r.value, 32, L"%.0f%%", g_metrics.batteryPercent);
+            }
+        } else {
+            swprintf(r.value, 32, L"AC");
+        }
+        r.colLabel = g_theme.label;
+        r.colValue = g_theme.value;
+        sysRows.push_back(r);
+    }
+
     if (g_config.showUptime) {
         MetricRow r;
         wcscpy_s(r.label, L"UP");
@@ -233,7 +250,7 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
     HBITMAP memBitmap = CreateCompatibleBitmap(hdc, g_curWidth, MONITOR_HEIGHT);
     HGDIOBJ oldBitmap = SelectObject(memDC, memBitmap);
 
-    COLORREF fillBg = g_config.transparentBg ? COLOR_TRANSPARENT_KEY : g_theme.background;
+    COLORREF fillBg = g_config.transparentBg ? g_transparentKey : g_theme.background;
     HBRUSH bgBrush = CreateSolidBrush(fillBg);
     RECT clientRect = { 0, 0, g_curWidth, MONITOR_HEIGHT };
     FillRect(memDC, &clientRect, bgBrush);
