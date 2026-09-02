@@ -12,6 +12,9 @@ struct SystemMetrics {
     double diskFreeGB;
     double uploadSpeed;    // Bytes per sec
     double downloadSpeed;  // Bytes per sec
+    double batteryPercent; // 0 - 100
+    bool batteryCharging;
+    bool hasBattery;
 };
 
 extern SystemMetrics g_metrics;
