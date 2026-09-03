@@ -30,7 +30,7 @@ void SetDefaults() {
     g_config.fontWeight      = FW_SEMIBOLD;
 
     g_config.refreshRateMs   = 1000;
-    g_config.netUnit         = NET_UNIT_BYTES;
+    g_config.netUnit         = NET_UNIT_BITS;
     g_config.clickThrough    = false;
     g_config.runAtStartup    = false;
 
