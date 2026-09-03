@@ -1,5 +1,6 @@
 #include "Metrics.h"
 #include "Config.h"
+#include <unordered_map>
 
 SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, false, false };
 
@@ -9,8 +10,11 @@ static PDH_HCOUNTER g_hGpuCounter = NULL;
 static PDH_HCOUNTER g_hDiskCounter = NULL;
 static PDH_HCOUNTER g_hCpuTempCounter = NULL;
 
-static ULONG64 g_prevInBytes = 0;
-static ULONG64 g_prevOutBytes = 0;
+struct IfaceTraffic {
+    ULONG64 inBytes;
+    ULONG64 outBytes;
+};
+static std::unordered_map<ULONG64, IfaceTraffic> g_prevIfaces;
 static ULONGLONG g_prevTickCount = 0;
 
 // WMI for ACPI CPU Temperature
@@ -380,28 +384,49 @@ void UpdateNetwork() {
 
     PMIB_IF_TABLE2 pIfTable = NULL;
     if (GetIfTable2(&pIfTable) == NO_ERROR) {
-        ULONG64 totalIn = 0, totalOut = 0;
+        ULONGLONG now = GetTickCount64();
+        double elapsedSec = (g_prevTickCount != 0 && now > g_prevTickCount) 
+                            ? (double)(now - g_prevTickCount) / 1000.0 
+                            : 0.0;
+
+        ULONG64 deltaInTotal = 0;
+        ULONG64 deltaOutTotal = 0;
+        std::unordered_map<ULONG64, IfaceTraffic> currentIfaces;
 
         for (ULONG i = 0; i < pIfTable->NumEntries; i++) {
             MIB_IF_ROW2* row = &pIfTable->Table[i];
-            if (row->Type != IF_TYPE_SOFTWARE_LOOPBACK && row->OperStatus == IfOperStatusUp) {
-                totalIn += row->InOctets;
-                totalOut += row->OutOctets;
+            
+            if (row->Type == IF_TYPE_SOFTWARE_LOOPBACK || 
+                row->Type == IF_TYPE_TUNNEL || 
+                row->InterfaceAndOperStatusFlags.FilterInterface || 
+                row->OperStatus != IfOperStatusUp) {
+                continue;
+            }
+
+            ULONG64 luidKey = row->InterfaceLuid.Value;
+            currentIfaces[luidKey] = { row->InOctets, row->OutOctets };
+
+            auto it = g_prevIfaces.find(luidKey);
+            if (it != g_prevIfaces.end() && elapsedSec > 0.0) {
+                if (row->InOctets >= it->second.inBytes) {
+                    deltaInTotal += (row->InOctets - it->second.inBytes);
+                }
+                if (row->OutOctets >= it->second.outBytes) {
+                    deltaOutTotal += (row->OutOctets - it->second.outBytes);
+                }
             }
         }
         FreeMibTable(pIfTable);
 
-        ULONGLONG now = GetTickCount64();
-        if (g_prevTickCount != 0 && now > g_prevTickCount) {
-            double elapsedSec = (now - g_prevTickCount) / 1000.0;
-            g_metrics.downloadSpeed = (double)(totalIn - g_prevInBytes) / elapsedSec;
-            g_metrics.uploadSpeed = (double)(totalOut - g_prevOutBytes) / elapsedSec;
-            if (g_metrics.downloadSpeed < 0) g_metrics.downloadSpeed = 0;
-            if (g_metrics.uploadSpeed < 0)   g_metrics.uploadSpeed = 0;
+        if (elapsedSec > 0.0) {
+            g_metrics.downloadSpeed = (double)deltaInTotal / elapsedSec;
+            g_metrics.uploadSpeed = (double)deltaOutTotal / elapsedSec;
+        } else {
+            g_metrics.downloadSpeed = 0.0;
+            g_metrics.uploadSpeed = 0.0;
         }
 
-        g_prevInBytes = totalIn;
-        g_prevOutBytes = totalOut;
+        g_prevIfaces = std::move(currentIfaces);
         g_prevTickCount = now;
     }
 }
@@ -440,13 +465,13 @@ void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
     if (g_config.netUnit == NET_UNIT_BITS) {
         double bits = speedBytes * 8.0;
         if (bits >= 1000000000.0) {
-            swprintf(outBuf, size, L"%.1f Gb/s", bits / 1000000000.0);
+            swprintf(outBuf, size, L"%.1f Gbps", bits / 1000000000.0);
         } else if (bits >= 1000000.0) {
             double mb = bits / 1000000.0;
-            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f Mb/s", mb);
-            else             swprintf(outBuf, size, L"%.1f Mb/s", mb);
+            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f Mbps", mb);
+            else             swprintf(outBuf, size, L"%.1f Mbps", mb);
         } else {
-            swprintf(outBuf, size, L"%.0f Kb/s", bits / 1000.0);
+            swprintf(outBuf, size, L"%.0f Kbps", bits / 1000.0);
         }
     } else {
         double kb = speedBytes / 1024.0;
