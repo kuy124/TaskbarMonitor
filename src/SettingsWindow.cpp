@@ -260,85 +260,86 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         UpdateSettingsTheme(hWnd);
 
         // Top Navigation Buttons
-        const wchar_t* tabTitles[] = { L"Metrics", L"Layout", L"Font", L"Colors", L"Advanced" };
-        int tabW = 88;
+        const wchar_t* tabTitles[] = { L"Metrics", L"Layout", L"Typography", L"Colors", L"Advanced" };
+        int tabW = 94;
         for (int i = 0; i < 5; i++) {
             CreateWindowExW(0, L"BUTTON", tabTitles[i],
                 WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                16 + (i * (tabW + 4)), 12, tabW, 30, hWnd, (HMENU)(UINT_PTR)(IDC_TAB_BTN_BASE + i), NULL, NULL);
+                16 + (i * (tabW + 5)), 12, tabW, 30, hWnd, (HMENU)(UINT_PTR)(IDC_TAB_BTN_BASE + i), NULL, NULL);
         }
 
-        // --- TAB 0: Metrics ---
-        CreateWindowExW(0, L"BUTTON", L"Network Speed (Upload / Download)", WS_CHILD | BS_AUTOCHECKBOX, 36, 52, 390, 20, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 74, 390, 20, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 96, 390, 20, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"CPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 118, 390, 20, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"GPU Heat (°C)", WS_CHILD | BS_AUTOCHECKBOX, 36, 140, 390, 20, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM % and Used GB)", WS_CHILD | BS_AUTOCHECKBOX, 36, 162, 390, 20, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Storage Activity and Free Space", WS_CHILD | BS_AUTOCHECKBOX, 36, 184, 390, 20, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Battery Percentage and AC Status", WS_CHILD | BS_AUTOCHECKBOX, 36, 206, 390, 20, hWnd, (HMENU)IDC_CHK_BATTERY, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 36, 228, 390, 20, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
+        // --- TAB 0: Metrics (Structured Two-Column Grid) ---
+        CreateWindowExW(0, L"BUTTON", L"Network Speed (▲/▼)", WS_CHILD | BS_AUTOCHECKBOX, 36, 62, 205, 22, hWnd, (HMENU)IDC_CHK_NET, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Processor (CPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 92, 205, 22, hWnd, (HMENU)IDC_CHK_CPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Graphics Engine (GPU %)", WS_CHILD | BS_AUTOCHECKBOX, 36, 122, 205, 22, hWnd, (HMENU)IDC_CHK_GPU, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Physical Memory (RAM)", WS_CHILD | BS_AUTOCHECKBOX, 36, 152, 205, 22, hWnd, (HMENU)IDC_CHK_RAM, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Battery & AC Status", WS_CHILD | BS_AUTOCHECKBOX, 36, 182, 205, 22, hWnd, (HMENU)IDC_CHK_BATTERY, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Storage Target Drive:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 280, 160, 20, hWnd, (HMENU)IDC_LBL_DRIVE, NULL, NULL);
-        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 220, 276, 110, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"CPU Temperature (°C)", WS_CHILD | BS_AUTOCHECKBOX, 255, 62, 205, 22, hWnd, (HMENU)IDC_CHK_CPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"GPU Temperature (°C)", WS_CHILD | BS_AUTOCHECKBOX, 255, 92, 205, 22, hWnd, (HMENU)IDC_CHK_GPUTEMP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Storage Activity & Free", WS_CHILD | BS_AUTOCHECKBOX, 255, 122, 205, 22, hWnd, (HMENU)IDC_CHK_DISK, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"System Uptime", WS_CHILD | BS_AUTOCHECKBOX, 255, 152, 205, 22, hWnd, (HMENU)IDC_CHK_UPTIME, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Network Speed Units:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 314, 160, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
-        HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 310, 180, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Storage Target Drive:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 230, 180, 20, hWnd, (HMENU)IDC_LBL_DRIVE, NULL, NULL);
+        HWND hComboDrive = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL, 235, 226, 120, 140, hWnd, (HMENU)IDC_COMBO_DRIVE, NULL, NULL);
+
+        CreateWindowExW(0, L"STATIC", L"Network Speed Units:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 268, 180, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
+        HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 235, 264, 195, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
 
         // --- TAB 1: Position and Layout ---
-        CreateWindowExW(0, L"STATIC", L"Taskbar Alignment:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 72, 160, 20, hWnd, (HMENU)IDC_LBL_ALIGN, NULL, NULL);
-        HWND hComboAlign = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 68, 180, 120, hWnd, (HMENU)IDC_COMBO_ALIGN, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Taskbar Alignment:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 70, 180, 20, hWnd, (HMENU)IDC_LBL_ALIGN, NULL, NULL);
+        HWND hComboAlign = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 235, 66, 195, 120, hWnd, (HMENU)IDC_COMBO_ALIGN, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Horizontal Offset (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 114, 160, 20, hWnd, (HMENU)IDC_LBL_OFFSETX, NULL, NULL);
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"12", WS_CHILD | ES_AUTOHSCROLL, 220, 110, 90, 24, hWnd, (HMENU)IDC_EDIT_OFFSETX, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Horizontal Offset (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 110, 180, 20, hWnd, (HMENU)IDC_LBL_OFFSETX, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"12", WS_CHILD | ES_AUTOHSCROLL, 235, 106, 95, 24, hWnd, (HMENU)IDC_EDIT_OFFSETX, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Vertical Offset (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 156, 160, 20, hWnd, (HMENU)IDC_LBL_OFFSETY, NULL, NULL);
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0", WS_CHILD | ES_AUTOHSCROLL, 220, 152, 90, 24, hWnd, (HMENU)IDC_EDIT_OFFSETY, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Vertical Offset (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 150, 180, 20, hWnd, (HMENU)IDC_LBL_OFFSETY, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0", WS_CHILD | ES_AUTOHSCROLL, 235, 146, 95, 24, hWnd, (HMENU)IDC_EDIT_OFFSETY, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Item Gap Spacing (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 198, 160, 20, hWnd, (HMENU)IDC_LBL_SPACING, NULL, NULL);
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 220, 194, 90, 24, hWnd, (HMENU)IDC_EDIT_SPACING, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Item Gap Spacing (px):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 190, 180, 20, hWnd, (HMENU)IDC_LBL_SPACING, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 235, 186, 95, 24, hWnd, (HMENU)IDC_EDIT_SPACING, NULL, NULL);
 
-        CreateWindowExW(0, L"BUTTON", L"Render Vertical Dividers Between Metrics", WS_CHILD | BS_AUTOCHECKBOX, 36, 244, 390, 20, hWnd, (HMENU)IDC_CHK_DIVIDERS, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Render Vertical Dividers Between Metrics", WS_CHILD | BS_AUTOCHECKBOX, 36, 238, 420, 22, hWnd, (HMENU)IDC_CHK_DIVIDERS, NULL, NULL);
 
         // --- TAB 2: Typography ---
-        CreateWindowExW(0, L"STATIC", L"Font Family / Name:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 72, 160, 20, hWnd, (HMENU)IDC_LBL_FONT, NULL, NULL);
-        HWND hComboFont = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWN | WS_VSCROLL, 220, 68, 200, 220, hWnd, (HMENU)IDC_COMBO_FONT, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Font Family / Name:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 75, 180, 20, hWnd, (HMENU)IDC_LBL_FONT, NULL, NULL);
+        HWND hComboFont = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWN | WS_VSCROLL, 235, 71, 215, 220, hWnd, (HMENU)IDC_COMBO_FONT, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Font Size (points):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 118, 160, 20, hWnd, (HMENU)IDC_LBL_FONTSIZE, NULL, NULL);
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"11", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 220, 114, 90, 24, hWnd, (HMENU)IDC_EDIT_FONTSIZE, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Font Size (points):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 120, 180, 20, hWnd, (HMENU)IDC_LBL_FONTSIZE, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"11", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 235, 116, 95, 24, hWnd, (HMENU)IDC_EDIT_FONTSIZE, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Font Weight:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 164, 160, 20, hWnd, (HMENU)IDC_LBL_FONTWEIGHT, NULL, NULL);
-        HWND hComboWeight = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 160, 160, 120, hWnd, (HMENU)IDC_COMBO_FONTWEIGHT, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Font Weight:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 165, 180, 20, hWnd, (HMENU)IDC_LBL_FONTWEIGHT, NULL, NULL);
+        HWND hComboWeight = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 235, 161, 180, 120, hWnd, (HMENU)IDC_COMBO_FONTWEIGHT, NULL, NULL);
 
         // --- TAB 3: Theme and Colors ---
-        CreateWindowExW(0, L"STATIC", L"Monitor Theme Preset:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 68, 160, 20, hWnd, (HMENU)IDC_LBL_THEME, NULL, NULL);
-        HWND hComboTheme = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 64, 200, 120, hWnd, (HMENU)IDC_COMBO_THEME, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Monitor Theme Preset:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 66, 180, 20, hWnd, (HMENU)IDC_LBL_THEME, NULL, NULL);
+        HWND hComboTheme = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 235, 62, 200, 120, hWnd, (HMENU)IDC_COMBO_THEME, NULL, NULL);
 
-        CreateWindowExW(0, L"BUTTON", L"Transparent Background (Seamless Taskbar Blend)", WS_CHILD | BS_AUTOCHECKBOX, 36, 98, 390, 20, hWnd, (HMENU)IDC_CHK_TRANS_BG, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Auto-Adjust Text Contrast for Readability", WS_CHILD | BS_AUTOCHECKBOX, 36, 124, 390, 20, hWnd, (HMENU)IDC_CHK_AUTOCONTRAST, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Transparent Background (Seamless Taskbar Blend)", WS_CHILD | BS_AUTOCHECKBOX, 36, 100, 420, 22, hWnd, (HMENU)IDC_CHK_TRANS_BG, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Auto-Adjust Text Contrast for Readability", WS_CHILD | BS_AUTOCHECKBOX, 36, 128, 420, 22, hWnd, (HMENU)IDC_CHK_AUTOCONTRAST, NULL, NULL);
 
-        CreateWindowExW(0, L"BUTTON", L"Labels", WS_CHILD | BS_OWNERDRAW, 36, 154, 185, 30, hWnd, (HMENU)IDC_BTN_COL_LABEL, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Values", WS_CHILD | BS_OWNERDRAW, 235, 154, 185, 30, hWnd, (HMENU)IDC_BTN_COL_VALUE, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Upload (▲)", WS_CHILD | BS_OWNERDRAW, 36, 192, 185, 30, hWnd, (HMENU)IDC_BTN_COL_UP, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Download (▼)", WS_CHILD | BS_OWNERDRAW, 235, 192, 185, 30, hWnd, (HMENU)IDC_BTN_COL_DOWN, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Dividers", WS_CHILD | BS_OWNERDRAW, 36, 230, 185, 30, hWnd, (HMENU)IDC_BTN_COL_DIV, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Background", WS_CHILD | BS_OWNERDRAW, 235, 230, 185, 30, hWnd, (HMENU)IDC_BTN_COL_BG, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Labels", WS_CHILD | BS_OWNERDRAW, 36, 166, 200, 32, hWnd, (HMENU)IDC_BTN_COL_LABEL, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Values", WS_CHILD | BS_OWNERDRAW, 250, 166, 200, 32, hWnd, (HMENU)IDC_BTN_COL_VALUE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Upload (▲)", WS_CHILD | BS_OWNERDRAW, 36, 206, 200, 32, hWnd, (HMENU)IDC_BTN_COL_UP, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Download (▼)", WS_CHILD | BS_OWNERDRAW, 250, 206, 200, 32, hWnd, (HMENU)IDC_BTN_COL_DOWN, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Dividers", WS_CHILD | BS_OWNERDRAW, 36, 246, 200, 32, hWnd, (HMENU)IDC_BTN_COL_DIV, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Background", WS_CHILD | BS_OWNERDRAW, 250, 246, 200, 32, hWnd, (HMENU)IDC_BTN_COL_BG, NULL, NULL);
 
         // --- TAB 4: Advanced ---
-        CreateWindowExW(0, L"STATIC", L"Polling Rate (ms):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 72, 160, 20, hWnd, (HMENU)IDC_LBL_RATE, NULL, NULL);
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1000", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 220, 68, 100, 24, hWnd, (HMENU)IDC_EDIT_RATE, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Polling Rate (ms):", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 75, 180, 20, hWnd, (HMENU)IDC_LBL_RATE, NULL, NULL);
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1000", WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL, 235, 71, 105, 24, hWnd, (HMENU)IDC_EDIT_RATE, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Settings UI Theme:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 114, 160, 20, hWnd, (HMENU)IDC_LBL_SETTINGSTHEME, NULL, NULL);
-        HWND hComboSettingsTheme = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 220, 110, 180, 120, hWnd, (HMENU)IDC_COMBO_SETTINGSTHEME, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Settings UI Theme:", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 120, 180, 20, hWnd, (HMENU)IDC_LBL_SETTINGSTHEME, NULL, NULL);
+        HWND hComboSettingsTheme = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | CBS_DROPDOWNLIST, 235, 116, 195, 120, hWnd, (HMENU)IDC_COMBO_SETTINGSTHEME, NULL, NULL);
 
-        CreateWindowExW(0, L"BUTTON", L"Launch automatically on Windows Startup", WS_CHILD | BS_AUTOCHECKBOX, 36, 160, 390, 20, hWnd, (HMENU)IDC_CHK_AUTOSTART, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Click-Through Mode (Clicks pass directly to taskbar)", WS_CHILD | BS_AUTOCHECKBOX, 36, 192, 390, 20, hWnd, (HMENU)IDC_CHK_CLICKTHROUGH, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Launch automatically on Windows Startup", WS_CHILD | BS_AUTOCHECKBOX, 36, 168, 420, 22, hWnd, (HMENU)IDC_CHK_AUTOSTART, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Click-Through Mode (Clicks pass directly to taskbar)", WS_CHILD | BS_AUTOCHECKBOX, 36, 202, 420, 22, hWnd, (HMENU)IDC_CHK_CLICKTHROUGH, NULL, NULL);
 
-        // Bottom Action Buttons
-        CreateWindowExW(0, L"BUTTON", L"Defaults", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 16, 400, 90, 32, hWnd, (HMENU)IDC_BTN_DEFAULTS, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 172, 400, 84, 32, hWnd, (HMENU)IDC_BTN_APPLY, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Save and Close", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 264, 400, 114, 32, hWnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 386, 400, 86, 32, hWnd, (HMENU)IDC_BTN_CANCEL, NULL, NULL);
+        // Bottom Action Buttons (Flush and Proportional)
+        CreateWindowExW(0, L"BUTTON", L"Defaults", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 16, 412, 95, 34, hWnd, (HMENU)IDC_BTN_DEFAULTS, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 198, 412, 88, 34, hWnd, (HMENU)IDC_BTN_APPLY, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 294, 412, 88, 34, hWnd, (HMENU)IDC_BTN_CANCEL, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Save & Close", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 390, 412, 116, 34, hWnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
 
         EnumChildWindows(hWnd, [](HWND hChild, LPARAM lParam) -> BOOL {
             SendMessageW(hChild, WM_SETFONT, lParam, TRUE);
@@ -442,7 +443,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
         HGDIOBJ oldBrush = SelectObject(hdc, hCardBrush);
         HGDIOBJ oldPen   = SelectObject(hdc, hCardBorderPen);
-        RoundRect(hdc, 16, 44, 474, 386, 10, 10);
+        RoundRect(hdc, 16, 48, 506, 398, 12, 12);
         SelectObject(hdc, oldBrush);
         SelectObject(hdc, oldPen);
 
@@ -486,7 +487,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             DeleteObject(tabBg);
 
             if (isSelected) {
-                RECT barRc = { dis->rcItem.left + 4, dis->rcItem.bottom - 3, dis->rcItem.right - 4, dis->rcItem.bottom };
+                RECT barRc = { dis->rcItem.left + 8, dis->rcItem.bottom - 3, dis->rcItem.right - 8, dis->rcItem.bottom };
                 HBRUSH barBrush = CreateSolidBrush(s_colAccent);
                 FillRect(dis->hDC, &barRc, barBrush);
                 DeleteObject(barBrush);
@@ -503,7 +504,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         }
 
         // 2. Action Buttons
-        if (dis->CtlID == IDC_BTN_SAVE || dis->CtlID == IDC_BTN_APPLY) {
+        if (dis->CtlID == IDC_BTN_SAVE) {
             HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(0, 85, 160) : s_colAccent);
             FillRect(dis->hDC, &dis->rcItem, btnBrush);
             DeleteObject(btnBrush);
@@ -511,18 +512,27 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             SetBkMode(dis->hDC, TRANSPARENT);
             SetTextColor(dis->hDC, RGB(255, 255, 255));
             SelectObject(dis->hDC, hFontBtn);
-            DrawTextW(dis->hDC, dis->CtlID == IDC_BTN_SAVE ? L"Save and Close" : L"Apply", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DrawTextW(dis->hDC, L"Save & Close", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             return TRUE;
-        } else if (dis->CtlID == IDC_BTN_CANCEL || dis->CtlID == IDC_BTN_DEFAULTS) {
+        } else if (dis->CtlID == IDC_BTN_APPLY || dis->CtlID == IDC_BTN_CANCEL || dis->CtlID == IDC_BTN_DEFAULTS) {
             HBRUSH btnBrush = CreateSolidBrush(s_isDarkMode ? (dis->itemState & ODS_SELECTED ? RGB(55, 55, 62) : RGB(42, 42, 48))
                                                             : (dis->itemState & ODS_SELECTED ? RGB(215, 215, 222) : RGB(232, 232, 238)));
             FillRect(dis->hDC, &dis->rcItem, btnBrush);
             DeleteObject(btnBrush);
 
+            HPEN borderPen = CreatePen(PS_SOLID, 1, s_colBorder);
+            HGDIOBJ oldPen = SelectObject(dis->hDC, borderPen);
+            HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+            Rectangle(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom);
+            SelectObject(dis->hDC, oldPen);
+            SelectObject(dis->hDC, oldBrush);
+            DeleteObject(borderPen);
+
             SetBkMode(dis->hDC, TRANSPARENT);
             SetTextColor(dis->hDC, s_colTextPrimary);
             SelectObject(dis->hDC, hFontBtn);
-            DrawTextW(dis->hDC, dis->CtlID == IDC_BTN_CANCEL ? L"Cancel" : L"Defaults", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            const wchar_t* btnLbl = (dis->CtlID == IDC_BTN_APPLY) ? L"Apply" : ((dis->CtlID == IDC_BTN_CANCEL) ? L"Cancel" : L"Defaults");
+            DrawTextW(dis->hDC, btnLbl, -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             return TRUE;
         }
 
@@ -634,19 +644,19 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
     WNDCLASSEXW swc = { sizeof(WNDCLASSEXW) };
     swc.lpfnWndProc = SettingsWndProc;
     swc.hInstance = hInstance;
-    swc.lpszClassName = L"Windows11NativeTaskbarMonitorSettings";
+    swc.lpszClassName = L"TaskbarMonitorSettings";
     swc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassExW(&swc);
 
-    int winW = 506;
-    int winH = 484;
+    int winW = 538;
+    int winH = 504;
     int posX = (GetSystemMetrics(SM_CXSCREEN) - winW) / 2;
     int posY = (GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
 
     g_hSettingsWnd = CreateWindowExW(
         WS_EX_TOPMOST,
         swc.lpszClassName,
-        L"Taskbar Monitor Configuration",
+        L"TaskbarMonitor Settings",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
         posX, posY, winW, winH,
         NULL, NULL, hInstance, NULL
