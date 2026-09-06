@@ -127,7 +127,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"Windows11NativeTaskbarMonitor";
+    wc.lpszClassName = L"TaskbarMonitor";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassExW(&wc);
 
@@ -161,7 +161,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
     g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    wcscpy_s(g_nid.szTip, L"Taskbar Hardware Monitor");
+    wcscpy_s(g_nid.szTip, L"TaskbarMonitor");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
     InitTaskbarHooks(g_hWnd);
