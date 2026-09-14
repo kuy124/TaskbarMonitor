@@ -190,7 +190,7 @@ static void ApplyCurrentSettings(HWND hWnd) {
     GetDlgItemTextW(hWnd, IDC_EDIT_RATE, editBuf, 64);      g_config.refreshRateMs = _wtoi(editBuf);
 
     if (g_config.refreshRateMs < 100) g_config.refreshRateMs = 100;
-    if (g_config.fontSize < 8)  g_config.fontSize = 8;
+    if (g_config.fontSize < 1)  g_config.fontSize = 1;
     if (g_config.fontSize > 24) g_config.fontSize = 24;
 
     HWND hComboFont = GetDlgItem(hWnd, IDC_COMBO_FONT);

@@ -46,7 +46,7 @@ struct MonitorConfig {
 
     // Typography
     wchar_t fontFamily[64];
-    int fontSize;         // Point size (8 - 24)
+    int fontSize;         // Point size (1 - 24)
     int fontWeight;       // FW_NORMAL, FW_MEDIUM, FW_SEMIBOLD, FW_BOLD
 
     // Units & Performance
