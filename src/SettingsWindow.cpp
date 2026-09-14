@@ -35,13 +35,13 @@ static int g_currentTab = 0;
 static int g_settingsThemeMode = 0;
 
 static bool s_isDarkMode = true;
-static COLORREF s_colWindowBg      = RGB(28, 28, 30);
-static COLORREF s_colCardBg        = RGB(38, 38, 42);
-static COLORREF s_colControlBg     = RGB(46, 46, 52);
-static COLORREF s_colBorder        = RGB(58, 58, 64);
-static COLORREF s_colTextPrimary   = RGB(245, 245, 248);
-static COLORREF s_colTextSecondary = RGB(165, 170, 180);
-static COLORREF s_colAccent        = RGB(0, 120, 215);
+static COLORREF s_colWindowBg      = RGB(32, 32, 32);
+static COLORREF s_colCardBg        = RGB(44, 44, 44);
+static COLORREF s_colControlBg     = RGB(38, 38, 38);
+static COLORREF s_colBorder        = RGB(58, 58, 62);
+static COLORREF s_colTextPrimary   = RGB(255, 255, 255);
+static COLORREF s_colTextSecondary = RGB(160, 160, 160);
+static COLORREF s_colAccent        = RGB(96, 205, 255);
 
 static COLORREF s_colLabel, s_colValue, s_colNetUp, s_colNetDown, s_colDivider, s_colBg;
 
@@ -64,26 +64,38 @@ static void UpdateSettingsTheme(HWND hWnd) {
         s_isDarkMode = false;
     }
 
-    if (s_isDarkMode) {
-        s_colWindowBg      = RGB(26, 26, 28);
-        s_colCardBg        = RGB(36, 36, 40);
-        s_colControlBg     = RGB(46, 46, 52);
-        s_colBorder        = RGB(55, 55, 62);
-        s_colTextPrimary   = RGB(245, 245, 248);
-        s_colTextSecondary = RGB(165, 170, 180);
-        s_colAccent        = RGB(0, 122, 220);
+    DWORD dwmColor = 0;
+    BOOL opaque = FALSE;
+    if (SUCCEEDED(DwmGetColorizationColor(&dwmColor, &opaque))) {
+        BYTE r = (dwmColor >> 16) & 0xFF;
+        BYTE g = (dwmColor >> 8) & 0xFF;
+        BYTE b = dwmColor & 0xFF;
+        s_colAccent = RGB(r, g, b);
     } else {
-        s_colWindowBg      = RGB(242, 242, 246);
+        s_colAccent = s_isDarkMode ? RGB(96, 205, 255) : RGB(0, 95, 184);
+    }
+
+    if (s_isDarkMode) {
+        s_colWindowBg      = RGB(32, 32, 32);
+        s_colCardBg        = RGB(44, 44, 44);
+        s_colControlBg     = RGB(38, 38, 38);
+        s_colBorder        = RGB(58, 58, 62);
+        s_colTextPrimary   = RGB(255, 255, 255);
+        s_colTextSecondary = RGB(160, 160, 160);
+    } else {
+        s_colWindowBg      = RGB(243, 243, 243);
         s_colCardBg        = RGB(255, 255, 255);
-        s_colControlBg     = RGB(245, 245, 248);
-        s_colBorder        = RGB(218, 220, 226);
-        s_colTextPrimary   = RGB(15, 18, 24);
-        s_colTextSecondary = RGB(85, 90, 100);
-        s_colAccent        = RGB(0, 105, 195);
+        s_colControlBg     = RGB(238, 238, 240);
+        s_colBorder        = RGB(229, 229, 229);
+        s_colTextPrimary   = RGB(26, 26, 26);
+        s_colTextSecondary = RGB(94, 94, 94);
     }
 
     BOOL dwmDark = s_isDarkMode ? TRUE : FALSE;
     DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dwmDark, sizeof(dwmDark));
+
+    DWORD backdropType = 2;
+    DwmSetWindowAttribute(hWnd, 38, &backdropType, sizeof(backdropType));
 
     if (hBgBrush) DeleteObject(hBgBrush);
     if (hCardBrush) DeleteObject(hCardBrush);
@@ -441,9 +453,12 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
 
-        HGDIOBJ oldBrush = SelectObject(hdc, hCardBrush);
+        HGDIOBJ oldBrush = SelectObject(hdc, hControlBrush);
         HGDIOBJ oldPen   = SelectObject(hdc, hCardBorderPen);
-        RoundRect(hdc, 16, 48, 506, 398, 12, 12);
+        RoundRect(hdc, 14, 10, 508, 44, 8, 8);
+
+        SelectObject(hdc, hCardBrush);
+        RoundRect(hdc, 16, 50, 506, 400, 10, 10);
         SelectObject(hdc, oldBrush);
         SelectObject(hdc, oldPen);
 
@@ -476,21 +491,52 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;
-        
-        // 1. Navigation Tabs
+
+        // 1. Navigation Tabs (Windows 11 Segmented Pill Control)
         if (dis->CtlID >= IDC_TAB_0 && dis->CtlID <= IDC_TAB_4) {
             int tabIndex = dis->CtlID - IDC_TAB_BTN_BASE;
             bool isSelected = (g_currentTab == tabIndex);
 
-            HBRUSH tabBg = CreateSolidBrush(isSelected ? s_colCardBg : s_colWindowBg);
-            FillRect(dis->hDC, &dis->rcItem, tabBg);
-            DeleteObject(tabBg);
+            HBRUSH trackBg = CreateSolidBrush(s_colControlBg);
+            FillRect(dis->hDC, &dis->rcItem, trackBg);
+            DeleteObject(trackBg);
+
+            RECT pillRc = dis->rcItem;
+            InflateRect(&pillRc, -2, -2);
 
             if (isSelected) {
-                RECT barRc = { dis->rcItem.left + 8, dis->rcItem.bottom - 3, dis->rcItem.right - 8, dis->rcItem.bottom };
-                HBRUSH barBrush = CreateSolidBrush(s_colAccent);
-                FillRect(dis->hDC, &barRc, barBrush);
-                DeleteObject(barBrush);
+                HBRUSH pillBrush = CreateSolidBrush(s_colCardBg);
+                HPEN pillPen = CreatePen(PS_SOLID, 1, s_colBorder);
+                HGDIOBJ oldPillBrush = SelectObject(dis->hDC, pillBrush);
+                HGDIOBJ oldPillPen = SelectObject(dis->hDC, pillPen);
+                RoundRect(dis->hDC, pillRc.left, pillRc.top, pillRc.right, pillRc.bottom, 6, 6);
+                SelectObject(dis->hDC, oldPillBrush);
+                SelectObject(dis->hDC, oldPillPen);
+                DeleteObject(pillBrush);
+                DeleteObject(pillPen);
+
+                int indW = 16;
+                int indX = (pillRc.left + pillRc.right - indW) / 2;
+                RECT indRc = { indX, pillRc.bottom - 3, indX + indW, pillRc.bottom };
+                HBRUSH indBrush = CreateSolidBrush(s_colAccent);
+                HPEN indPen = CreatePen(PS_SOLID, 1, s_colAccent);
+                HGDIOBJ oB = SelectObject(dis->hDC, indBrush);
+                HGDIOBJ oP = SelectObject(dis->hDC, indPen);
+                RoundRect(dis->hDC, indRc.left, indRc.top, indRc.right, indRc.bottom, 2, 2);
+                SelectObject(dis->hDC, oB);
+                SelectObject(dis->hDC, oP);
+                DeleteObject(indBrush);
+                DeleteObject(indPen);
+            } else if (dis->itemState & ODS_SELECTED) {
+                HBRUSH hoverBrush = CreateSolidBrush(s_isDarkMode ? RGB(50, 50, 56) : RGB(230, 230, 235));
+                HPEN nullPen = CreatePen(PS_NULL, 0, RGB(0, 0, 0));
+                HGDIOBJ oldHBrush = SelectObject(dis->hDC, hoverBrush);
+                HGDIOBJ oldHPen = SelectObject(dis->hDC, nullPen);
+                RoundRect(dis->hDC, pillRc.left, pillRc.top, pillRc.right, pillRc.bottom, 6, 6);
+                SelectObject(dis->hDC, oldHBrush);
+                SelectObject(dis->hDC, oldHPen);
+                DeleteObject(hoverBrush);
+                DeleteObject(nullPen);
             }
 
             SetBkMode(dis->hDC, TRANSPARENT);
@@ -503,29 +549,45 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             return TRUE;
         }
 
-        // 2. Action Buttons
+        // 2. Action Buttons (Windows 11 Fluent Button Style)
         if (dis->CtlID == IDC_BTN_SAVE) {
-            HBRUSH btnBrush = CreateSolidBrush(dis->itemState & ODS_SELECTED ? RGB(0, 85, 160) : s_colAccent);
-            FillRect(dis->hDC, &dis->rcItem, btnBrush);
+            bool isPressed = (dis->itemState & ODS_SELECTED) != 0;
+            COLORREF btnFill = isPressed
+                ? RGB((GetRValue(s_colAccent) * 4) / 5, (GetGValue(s_colAccent) * 4) / 5, (GetBValue(s_colAccent) * 4) / 5)
+                : s_colAccent;
+
+            HBRUSH btnBrush = CreateSolidBrush(btnFill);
+            HPEN btnPen = CreatePen(PS_SOLID, 1, btnFill);
+            HGDIOBJ oBrush = SelectObject(dis->hDC, btnBrush);
+            HGDIOBJ oPen = SelectObject(dis->hDC, btnPen);
+            RoundRect(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom, 8, 8);
+            SelectObject(dis->hDC, oBrush);
+            SelectObject(dis->hDC, oPen);
             DeleteObject(btnBrush);
+            DeleteObject(btnPen);
+
+            double lum = (0.299 * GetRValue(s_colAccent) + 0.587 * GetGValue(s_colAccent) + 0.114 * GetBValue(s_colAccent)) / 255.0;
+            COLORREF txtCol = (lum > 0.6) ? RGB(0, 0, 0) : RGB(255, 255, 255);
 
             SetBkMode(dis->hDC, TRANSPARENT);
-            SetTextColor(dis->hDC, RGB(255, 255, 255));
+            SetTextColor(dis->hDC, txtCol);
             SelectObject(dis->hDC, hFontBtn);
             DrawTextW(dis->hDC, L"Save & Close", -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             return TRUE;
         } else if (dis->CtlID == IDC_BTN_APPLY || dis->CtlID == IDC_BTN_CANCEL || dis->CtlID == IDC_BTN_DEFAULTS) {
-            HBRUSH btnBrush = CreateSolidBrush(s_isDarkMode ? (dis->itemState & ODS_SELECTED ? RGB(55, 55, 62) : RGB(42, 42, 48))
-                                                            : (dis->itemState & ODS_SELECTED ? RGB(215, 215, 222) : RGB(232, 232, 238)));
-            FillRect(dis->hDC, &dis->rcItem, btnBrush);
-            DeleteObject(btnBrush);
+            bool isPressed = (dis->itemState & ODS_SELECTED) != 0;
+            COLORREF btnFill = isPressed
+                ? (s_isDarkMode ? RGB(56, 56, 62) : RGB(225, 227, 232))
+                : (s_isDarkMode ? RGB(44, 44, 48) : RGB(250, 250, 252));
 
+            HBRUSH btnBrush = CreateSolidBrush(btnFill);
             HPEN borderPen = CreatePen(PS_SOLID, 1, s_colBorder);
-            HGDIOBJ oldPen = SelectObject(dis->hDC, borderPen);
-            HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
-            Rectangle(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom);
-            SelectObject(dis->hDC, oldPen);
-            SelectObject(dis->hDC, oldBrush);
+            HGDIOBJ oBrush = SelectObject(dis->hDC, btnBrush);
+            HGDIOBJ oPen = SelectObject(dis->hDC, borderPen);
+            RoundRect(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom, 8, 8);
+            SelectObject(dis->hDC, oBrush);
+            SelectObject(dis->hDC, oPen);
+            DeleteObject(btnBrush);
             DeleteObject(borderPen);
 
             SetBkMode(dis->hDC, TRANSPARENT);
@@ -536,7 +598,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             return TRUE;
         }
 
-        // 3. Custom Color Pickers
+        // 3. Custom Color Pickers (Windows 11 Personalization Badges)
         if (dis->CtlID >= IDC_BTN_COL_LABEL && dis->CtlID <= IDC_BTN_COL_BG) {
             COLORREF c = RGB(0, 0, 0);
             const wchar_t* lbl = L"Color";
@@ -548,28 +610,40 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
                 case IDC_BTN_COL_DIV:   c = s_colDivider; lbl = L"Dividers"; break;
                 case IDC_BTN_COL_BG:    c = s_colBg; lbl = L"Background"; break;
             }
-            HBRUSH btnBrush = CreateSolidBrush(s_isDarkMode ? RGB(45, 45, 52) : RGB(236, 236, 242));
-            FillRect(dis->hDC, &dis->rcItem, btnBrush);
-            DeleteObject(btnBrush);
 
-            RECT colorSwatch = { dis->rcItem.left + 8, dis->rcItem.top + 6, dis->rcItem.left + 32, dis->rcItem.bottom - 6 };
+            bool isPressed = (dis->itemState & ODS_SELECTED) != 0;
+            COLORREF btnFill = isPressed
+                ? (s_isDarkMode ? RGB(52, 52, 58) : RGB(228, 230, 236))
+                : (s_isDarkMode ? RGB(40, 40, 44) : RGB(255, 255, 255));
+
+            HBRUSH cardBrush = CreateSolidBrush(btnFill);
+            HPEN cardBorder = CreatePen(PS_SOLID, 1, s_colBorder);
+            HGDIOBJ oB = SelectObject(dis->hDC, cardBrush);
+            HGDIOBJ oP = SelectObject(dis->hDC, cardBorder);
+            RoundRect(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom, 8, 8);
+            SelectObject(dis->hDC, oB);
+            SelectObject(dis->hDC, oP);
+            DeleteObject(cardBrush);
+            DeleteObject(cardBorder);
+
+            int swatchSize = 18;
+            int swatchX = dis->rcItem.left + 10;
+            int swatchY = dis->rcItem.top + (dis->rcItem.bottom - dis->rcItem.top - swatchSize) / 2;
             HBRUSH swatchBrush = CreateSolidBrush(c);
-            FillRect(dis->hDC, &colorSwatch, swatchBrush);
+            HPEN swatchPen = CreatePen(PS_SOLID, 1, s_isDarkMode ? RGB(75, 75, 82) : RGB(190, 192, 200));
+            HGDIOBJ oSB = SelectObject(dis->hDC, swatchBrush);
+            HGDIOBJ oSP = SelectObject(dis->hDC, swatchPen);
+            Ellipse(dis->hDC, swatchX, swatchY, swatchX + swatchSize, swatchY + swatchSize);
+            SelectObject(dis->hDC, oSB);
+            SelectObject(dis->hDC, oSP);
             DeleteObject(swatchBrush);
-
-            HPEN swatchPen = CreatePen(PS_SOLID, 1, s_colBorder);
-            HGDIOBJ op = SelectObject(dis->hDC, swatchPen);
-            HGDIOBJ ob = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
-            Rectangle(dis->hDC, colorSwatch.left, colorSwatch.top, colorSwatch.right, colorSwatch.bottom);
-            SelectObject(dis->hDC, op);
-            SelectObject(dis->hDC, ob);
             DeleteObject(swatchPen);
 
             RECT textRc = dis->rcItem;
-            textRc.left += 40;
+            textRc.left = swatchX + swatchSize + 10;
             SetBkMode(dis->hDC, TRANSPARENT);
             SetTextColor(dis->hDC, s_colTextPrimary);
-            SelectObject(dis->hDC, hFontBody);
+            SelectObject(dis->hDC, hFontBtn);
             DrawTextW(dis->hDC, lbl, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             return TRUE;
         }
@@ -654,7 +728,7 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
     int posY = (GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
 
     g_hSettingsWnd = CreateWindowExW(
-        WS_EX_TOPMOST,
+        0,
         swc.lpszClassName,
         L"TaskbarMonitor Settings",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
