@@ -13,6 +13,7 @@ set(SOURCES
     src/Theme.h
     src/Theme.cpp
     src/Metrics.h
+    src/SensorFeed.h
     src/Metrics.cpp
     src/Renderer.h
     src/Renderer.cpp
@@ -20,10 +21,17 @@ set(SOURCES
     src/TaskbarSync.cpp
     src/SettingsWindow.h
     src/SettingsWindow.cpp
+    src/StartupDialog.h
+    src/StartupDialog.cpp
     src/License.h
     src/License.cpp
     src/Main.cpp
+    src/Resource.h
     src/TaskbarMonitor.rc
+)
+
+set_source_files_properties(src/TaskbarMonitor.rc PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TaskbarMonitor.ico"
 )
 
 add_executable(TaskbarMonitor WIN32 ${SOURCES})
@@ -42,9 +50,22 @@ target_link_libraries(TaskbarMonitor PRIVATE
     ole32
     oleaut32
     wbemuuid
+    winhttp
 )
 
 if (MINGW)
     target_compile_options(TaskbarMonitor PRIVATE -municode -mwindows -O3)
     target_link_options(TaskbarMonitor PRIVATE -municode -mwindows)
+endif()
+
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(SensorFeedTest tests/SensorFeedTest.cpp)
+    target_include_directories(SensorFeedTest PRIVATE src)
+    if (MSVC)
+        target_compile_options(SensorFeedTest PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(SensorFeedTest PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME SensorFeedTest COMMAND SensorFeedTest)
 endif()

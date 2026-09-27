@@ -7,6 +7,7 @@ static HWINEVENTHOOK g_hHookShow = NULL;
 static HWINEVENTHOOK g_hHookHide = NULL;
 static HWINEVENTHOOK g_hHookCreate = NULL;
 static HWND g_hMainWnd = NULL;
+static DWORD g_hookPid = 0;
 
 void AttachToTaskbar(HWND hWnd) {
     g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
@@ -21,9 +22,8 @@ void AttachToTaskbar(HWND hWnd) {
         LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
         exStyle &= ~WS_EX_TOPMOST;
         exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-        if (g_config.clickThrough) {
-            exStyle |= WS_EX_TRANSPARENT;
-        }
+        if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
+        else exStyle &= ~WS_EX_TRANSPARENT;
         SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
 
         SetParent(hWnd, g_hTaskbar);
@@ -46,7 +46,7 @@ void SyncWithTaskbar(HWND hWnd) {
     int tbWidth = tbClientRect.right - tbClientRect.left;
     int tbHeight = tbClientRect.bottom - tbClientRect.top;
 
-    if (tbWidth <= 4 || tbHeight <= 4) {
+    if (!IsWindowVisible(g_hTaskbar) || tbWidth < g_curWidth || tbHeight < MONITOR_HEIGHT) {
         ShowWindow(hWnd, SW_HIDE);
         return;
     }
@@ -85,6 +85,7 @@ void SyncWithTaskbar(HWND hWnd) {
 
 static bool IsTaskbarOrChild(HWND hwnd) {
     if (!hwnd || !g_hTaskbar) return false;
+    if (g_hMainWnd && (hwnd == g_hMainWnd || IsChild(g_hMainWnd, hwnd))) return false;
     if (hwnd == g_hTaskbar) return true;
     return IsChild(g_hTaskbar, hwnd);
 }
@@ -109,9 +110,10 @@ static void CALLBACK CreateWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, L
         GetClassNameW(hwnd, cls, 64);
         if (wcscmp(cls, L"Shell_TrayWnd") == 0) {
             AttachToTaskbar(g_hMainWnd);
+            InitTaskbarHooks(g_hMainWnd);
+            SyncWithTaskbar(g_hMainWnd);
         }
     }
-    SyncWithTaskbar(g_hMainWnd);
 }
 
 void InitTaskbarHooks(HWND hWnd) {
@@ -121,7 +123,11 @@ void InitTaskbarHooks(HWND hWnd) {
     if (g_hTaskbar) {
         DWORD explorerPid = 0;
         GetWindowThreadProcessId(g_hTaskbar, &explorerPid);
-        if (explorerPid != 0) {
+        if (explorerPid != 0 && explorerPid != g_hookPid) {
+            if (g_hHookLoc) UnhookWinEvent(g_hHookLoc);
+            if (g_hHookShow) UnhookWinEvent(g_hHookShow);
+            if (g_hHookHide) UnhookWinEvent(g_hHookHide);
+            g_hookPid = explorerPid;
             g_hHookLoc = SetWinEventHook(
                 EVENT_OBJECT_LOCATIONCHANGE,
                 EVENT_OBJECT_LOCATIONCHANGE,
@@ -154,7 +160,7 @@ void InitTaskbarHooks(HWND hWnd) {
         }
     }
 
-    g_hHookCreate = SetWinEventHook(
+    if (!g_hHookCreate) g_hHookCreate = SetWinEventHook(
         EVENT_OBJECT_CREATE,
         EVENT_OBJECT_CREATE,
         NULL,
@@ -166,6 +172,7 @@ void InitTaskbarHooks(HWND hWnd) {
 }
 
 void CleanupTaskbarHooks() {
+    g_hookPid = 0;
     if (g_hHookLoc)    { UnhookWinEvent(g_hHookLoc);    g_hHookLoc = NULL; }
     if (g_hHookShow)   { UnhookWinEvent(g_hHookShow);   g_hHookShow = NULL; }
     if (g_hHookHide)   { UnhookWinEvent(g_hHookHide);   g_hHookHide = NULL; }

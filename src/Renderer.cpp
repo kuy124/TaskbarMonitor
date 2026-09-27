@@ -70,7 +70,8 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
             col.row1.colValue = g_theme.value;
 
             wcscpy_s(col.row2.label, L"GPU");
-            swprintf(col.row2.value, 32, L"%2.0f%%", g_metrics.gpuUsage);
+            if (g_metrics.gpuUsage < 0) wcscpy_s(col.row2.value, L"N/A");
+            else swprintf(col.row2.value, 32, L"%2.0f%%", g_metrics.gpuUsage);
             col.row2.colLabel = g_theme.label;
             col.row2.colValue = g_theme.value;
         } else if (g_config.showCPU) {
@@ -82,7 +83,8 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         } else {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"GPU");
-            swprintf(col.row1.value, 32, L"%2.0f%%", g_metrics.gpuUsage);
+            if (g_metrics.gpuUsage < 0) wcscpy_s(col.row1.value, L"N/A");
+            else swprintf(col.row1.value, 32, L"%2.0f%%", g_metrics.gpuUsage);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         }
@@ -96,24 +98,28 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         if (g_config.showCPUTemp && g_config.showGPUTemp) {
             col.hasRow2 = true;
             wcscpy_s(col.row1.label, L"C°");
-            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
+            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
 
             wcscpy_s(col.row2.label, L"G°");
-            swprintf(col.row2.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            if (g_metrics.gpuTemp < 0) wcscpy_s(col.row2.value, L"N/A");
+            else swprintf(col.row2.value, 32, L"%.0f°C", g_metrics.gpuTemp);
             col.row2.colLabel = g_theme.label;
             col.row2.colValue = g_theme.value;
         } else if (g_config.showCPUTemp) {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"C°");
-            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
+            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         } else {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"G°");
-            swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            if (g_metrics.gpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
+            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.gpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         }
@@ -143,12 +149,14 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         col.isNet = false;
         col.hasRow2 = true;
         wcscpy_s(col.row1.label, L"DSK");
-        swprintf(col.row1.value, 32, L"%2.0f%%", g_metrics.diskUsage);
+        if (g_metrics.diskUsage < 0) wcscpy_s(col.row1.value, L"N/A");
+        else swprintf(col.row1.value, 32, L"%2.0f%%", g_metrics.diskUsage);
         col.row1.colLabel = g_theme.label;
         col.row1.colValue = g_theme.value;
 
         swprintf(col.row2.label, 16, L"%c:", g_config.targetDrive[0]);
-        if (g_metrics.diskFreeGB >= 1000.0) swprintf(col.row2.value, 32, L"%.1fT", g_metrics.diskFreeGB / 1024.0);
+        if (g_metrics.diskFreeGB < 0) wcscpy_s(col.row2.value, L"N/A");
+        else if (g_metrics.diskFreeGB >= 1000.0) swprintf(col.row2.value, 32, L"%.1fT", g_metrics.diskFreeGB / 1024.0);
         else swprintf(col.row2.value, 32, L"%.0fG", g_metrics.diskFreeGB);
         col.row2.colLabel = g_theme.label;
         col.row2.colValue = g_theme.value;

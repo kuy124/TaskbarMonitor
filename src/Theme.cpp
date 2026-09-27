@@ -50,6 +50,18 @@ static COLORREF AdjustForContrast(COLORREF textCol, COLORREF bgCol) {
 }
 
 void UpdateThemeColors() {
+    bool lightKey = g_config.themeMode == THEME_LIGHT;
+    if (g_config.themeMode == THEME_AUTO) {
+        DWORD isLight = 0, size = sizeof(isLight);
+        HKEY key;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+            RegQueryValueExW(key, L"SystemUsesLightTheme", NULL, NULL, (LPBYTE)&isLight, &size);
+            RegCloseKey(key);
+        }
+        lightKey = isLight == 1;
+    }
+    g_transparentKey = lightKey ? RGB(254, 254, 254) : RGB(1, 1, 1);
+    if (g_hWnd && IsWindow(g_hWnd)) SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
     COLORREF referenceBg = g_config.colBackground;
 
     // Detect taskbar background if in transparent mode
@@ -75,7 +87,6 @@ void UpdateThemeColors() {
     }
 
     if (g_config.themeMode == THEME_LIGHT) {
-        COLORREF bg = g_config.transparentBg ? referenceBg : RGB(242, 244, 248);
         g_theme.divider    = RGB(205, 210, 218);
         g_theme.label      = RGB(105, 110, 122);  // Clean muted slate for clear label distinction
         g_theme.value      = RGB(18, 20, 26);     // Solid crisp dark text for values
@@ -137,11 +148,6 @@ void UpdateThemeColors() {
     }
 
     bool isLightMode = (g_config.themeMode == THEME_LIGHT) || (g_config.themeMode == THEME_AUTO && isLight == 1);
-    g_transparentKey = isLightMode ? RGB(254, 254, 254) : RGB(1, 1, 1);
-
-    if (g_hWnd && IsWindow(g_hWnd)) {
-        SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
-    }
 
     if (isLightMode) {
         g_theme.divider    = RGB(205, 210, 218);

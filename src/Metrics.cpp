@@ -1,8 +1,11 @@
 #include "Metrics.h"
 #include "Config.h"
+#include "SensorFeed.h"
 #include <unordered_map>
+#include <algorithm>
+#include <winhttp.h>
 
-SystemMetrics g_metrics = { 0.0, 42.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, false, false };
+SystemMetrics g_metrics = { 0.0, -1.0, 0.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 100.0, false, false };
 
 static FILETIME g_prevIdleTime = {0}, g_prevKernelTime = {0}, g_prevUserTime = {0};
 static PDH_HQUERY g_hPdhQuery = NULL;
@@ -16,6 +19,43 @@ struct IfaceTraffic {
 };
 static std::unordered_map<ULONG64, IfaceTraffic> g_prevIfaces;
 static ULONGLONG g_prevTickCount = 0;
+static bool g_pdhReady = false;
+static ULONGLONG g_lastLocalPoll = 0;
+static SensorTemperatures g_localTemperatures;
+static ULONGLONG g_lastWmiPoll = 0;
+
+static SensorTemperatures ReadLocalTemperatures() {
+    SensorTemperatures result;
+    HINTERNET session = WinHttpOpen(L"TaskbarMonitor/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return result;
+    WinHttpSetTimeouts(session, 200, 200, 200, 200);
+    HINTERNET connection = WinHttpConnect(session, L"127.0.0.1", 8085, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", L"/data.json", NULL,
+                                          WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0) : NULL;
+    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                      WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, NULL)) {
+        DWORD status = 0, size = sizeof(status);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) && status == 200) {
+            std::string body;
+            char buffer[4096];
+            DWORD read = 0;
+            bool complete = false;
+            while (body.size() < 1024 * 1024) {
+                DWORD count = static_cast<DWORD>(std::min<size_t>(sizeof(buffer), 1024 * 1024 - body.size()));
+                if (!WinHttpReadData(request, buffer, count, &read)) break;
+                if (!read) { complete = true; break; }
+                body.append(buffer, read);
+            }
+            if (complete) result = ParseSensorTemperatures(body);
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return result;
+}
 
 // WMI for ACPI CPU Temperature
 static IWbemLocator* g_pWbemLocator = NULL;
@@ -181,10 +221,15 @@ void CleanupMetrics() {
 void UpdateCPUTemp() {
     if (!g_config.showCPUTemp) return;
 
+    if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.cpu >= 0.0) {
+        g_metrics.cpuTemp = g_localTemperatures.cpu;
+        return;
+    }
+
     bool foundSensor = false;
 
     // 1. Check PDH Thermal Counter
-    if (g_hPdhQuery && g_hCpuTempCounter) {
+    if (g_pdhReady && g_hCpuTempCounter) {
         PDH_FMT_COUNTERVALUE cv;
         if (PdhGetFormattedCounterValue(g_hCpuTempCounter, PDH_FMT_DOUBLE, NULL, &cv) == ERROR_SUCCESS) {
             if (cv.CStatus == PDH_CSTATUS_VALID_DATA && cv.doubleValue > 200.0) {
@@ -198,7 +243,9 @@ void UpdateCPUTemp() {
     }
 
     // 2. Query WMI MSAcpi_ThermalZoneTemperature
-    if (!foundSensor) {
+    ULONGLONG now = GetTickCount64();
+    if (!foundSensor && (g_lastWmiPoll == 0 || now - g_lastWmiPoll >= 5000)) {
+        g_lastWmiPoll = now;
         if (!g_wmiInitialized) InitWmi();
         if (g_pWbemServices) {
             BSTR bstrQuery = SysAllocString(L"SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
@@ -212,7 +259,7 @@ void UpdateCPUTemp() {
                 IWbemClassObject* pclsObj = NULL;
                 ULONG uReturn = 0;
                 double maxTemp = -1.0;
-                while (pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn) == S_OK && uReturn > 0) {
+                while (pEnumerator->Next(150, 1, &pclsObj, &uReturn) == S_OK && uReturn > 0) {
                     VARIANT vtProp;
                     VariantInit(&vtProp);
                     if (SUCCEEDED(pclsObj->Get(L"CurrentTemperature", 0, &vtProp, 0, 0))) {
@@ -236,15 +283,16 @@ void UpdateCPUTemp() {
         }
     }
 
-    // 3. Fallback: Smooth activity thermal curve if no ACPI sensor is exposed
-    if (!foundSensor) {
-        double target = 38.0 + (g_metrics.cpuUsage * 0.42);
-        g_metrics.cpuTemp = (g_metrics.cpuTemp * 0.7) + (target * 0.3);
-    }
+    if (!foundSensor) g_metrics.cpuTemp = -1.0;
 }
 
 void UpdateGPUTemp() {
     if (!g_config.showGPUTemp) return;
+
+    if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.gpu >= 0.0) {
+        g_metrics.gpuTemp = g_localTemperatures.gpu;
+        return;
+    }
 
     bool foundSensor = false;
 
@@ -280,38 +328,37 @@ void UpdateGPUTemp() {
         }
     }
 
-    // 4. Fallback: Smooth activity thermal curve if no GPU sensor is exposed
-    if (!foundSensor) {
-        double target = 36.0 + (g_metrics.gpuUsage * 0.38);
-        g_metrics.gpuTemp = (g_metrics.gpuTemp * 0.7) + (target * 0.3);
-    }
+    if (!foundSensor) g_metrics.gpuTemp = -1.0;
 }
 
 void UpdateGPU() {
     if (!g_config.showGPU && !g_config.showGPUTemp) return;
 
-    if (g_hPdhQuery && g_hGpuCounter) {
-        if (PdhCollectQueryData(g_hPdhQuery) == ERROR_SUCCESS) {
+    g_metrics.gpuUsage = -1.0;
+    if (g_pdhReady && g_hGpuCounter) {
             DWORD bufferSize = 0, itemCount = 0;
             PDH_STATUS status = PdhGetFormattedCounterArrayW(g_hGpuCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, NULL);
-            if (status == PDH_MORE_DATA && bufferSize > 0) {
+            if (static_cast<DWORD>(status) == PDH_MORE_DATA && bufferSize > 0) {
                 PDH_FMT_COUNTERVALUE_ITEM_W* pItems = (PDH_FMT_COUNTERVALUE_ITEM_W*)malloc(bufferSize);
                 if (pItems) {
                     if (PdhGetFormattedCounterArrayW(g_hGpuCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, pItems) == ERROR_SUCCESS) {
                         double total = 0.0;
+                        bool valid = false;
                         for (DWORD i = 0; i < itemCount; i++) {
                             if (pItems[i].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA) {
                                 total += pItems[i].FmtValue.doubleValue;
+                                valid = true;
                             }
                         }
-                        g_metrics.gpuUsage = total;
-                        if (g_metrics.gpuUsage > 100.0) g_metrics.gpuUsage = 100.0;
-                        if (g_metrics.gpuUsage < 0.0)   g_metrics.gpuUsage = 0.0;
+                        if (valid) {
+                            g_metrics.gpuUsage = total;
+                            if (g_metrics.gpuUsage > 100.0) g_metrics.gpuUsage = 100.0;
+                            if (g_metrics.gpuUsage < 0.0)   g_metrics.gpuUsage = 0.0;
+                        }
                     }
                     free(pItems);
                 }
             }
-        }
     }
     UpdateGPUTemp();
 }
@@ -319,7 +366,8 @@ void UpdateGPU() {
 void UpdateDisk() {
     if (!g_config.showDisk) return;
 
-    if (g_hPdhQuery && g_hDiskCounter) {
+    g_metrics.diskUsage = -1.0;
+    if (g_pdhReady && g_hDiskCounter) {
         PDH_FMT_COUNTERVALUE cv;
         if (PdhGetFormattedCounterValue(g_hDiskCounter, PDH_FMT_DOUBLE, NULL, &cv) == ERROR_SUCCESS) {
             if (cv.CStatus == PDH_CSTATUS_VALID_DATA) {
@@ -334,7 +382,7 @@ void UpdateDisk() {
     if (GetDiskFreeSpaceExW(g_config.targetDrive, &freeBytesAvailable, &totalBytes, &totalFreeBytes)) {
         g_metrics.diskFreeGB = (double)freeBytesAvailable.QuadPart / (1024.0 * 1024.0 * 1024.0);
     } else {
-        g_metrics.diskFreeGB = 0.0;
+        g_metrics.diskFreeGB = -1.0;
     }
 }
 
@@ -428,6 +476,11 @@ void UpdateNetwork() {
 
         g_prevIfaces = std::move(currentIfaces);
         g_prevTickCount = now;
+    } else {
+        g_metrics.downloadSpeed = -1.0;
+        g_metrics.uploadSpeed = -1.0;
+        g_prevIfaces.clear();
+        g_prevTickCount = 0;
     }
 }
 
@@ -451,6 +504,18 @@ void UpdateBattery() {
 }
 
 void UpdateAllMetrics() {
+    g_pdhReady = g_hPdhQuery && PdhCollectQueryData(g_hPdhQuery) == ERROR_SUCCESS;
+    ULONGLONG now = GetTickCount64();
+    if (g_config.useLocalSensors) {
+        if (g_lastLocalPoll == 0 || now - g_lastLocalPoll >= 2000) {
+            g_lastLocalPoll = now;
+            g_localTemperatures = (g_config.showCPUTemp || g_config.showGPUTemp)
+                ? ReadLocalTemperatures() : SensorTemperatures{};
+        }
+    } else {
+        g_lastLocalPoll = 0;
+        g_localTemperatures = {};
+    }
     UpdateCPU();
     UpdateGPU();
     UpdateDisk();
@@ -460,7 +525,10 @@ void UpdateAllMetrics() {
 }
 
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
-    if (speedBytes < 0) speedBytes = 0;
+    if (speedBytes < 0) {
+        swprintf(outBuf, size, L"N/A");
+        return;
+    }
 
     if (g_config.netUnit == NET_UNIT_BITS) {
         double bits = speedBytes * 8.0;

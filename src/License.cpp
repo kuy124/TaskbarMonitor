@@ -1,4 +1,5 @@
 #include "License.h"
+#include "Resource.h"
 #include "Config.h"
 
 // Button IDs
@@ -74,8 +75,8 @@ static const wchar_t* kLicenseText =
     L"NOTICE\r\n"
     L"-----\r\n"
     L"\r\n"
-    L"TaskbarMonitor is provided free of charge. It collects no personal data and\r\n"
-    L"sends nothing over the network. All configuration is stored locally in the\r\n"
+    L"TaskbarMonitor is provided free of charge. It collects no personal data.\r\n"
+    L"If enabled, local sensors are read from 127.0.0.1. Configuration is in the\r\n"
     L"Windows registry under HKCU\\Software\\TaskbarMonitor.\r\n"
     L"\r\n"
     L"Windows may prompt you with an \"Unknown Publisher\" warning when you first\r\n"
@@ -244,6 +245,10 @@ bool ShowLicenseDialog(HINSTANCE hInstance) {
     wc.hInstance = hInstance;
     wc.lpszClassName = L"TaskbarMonitorLicenseDLG";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_TASKBARMONITOR));
+    wc.hIconSm = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_TASKBARMONITOR),
+                                  IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                  GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     RegisterClassExW(&wc);
 
     int winW = 640;

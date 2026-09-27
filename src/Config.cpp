@@ -5,7 +5,142 @@ int g_curWidth = 430;
 
 #define CONFIG_KEY CONFIG_REGISTRY_KEY
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+#define APPROVED_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run"
 #define APP_NAME   L"TaskbarMonitor"
+
+static bool GetCurrentExecutablePath(wchar_t* outPath, DWORD pathCount) {
+    DWORD length = GetModuleFileNameW(NULL, outPath, pathCount);
+    return length > 0 && length < pathCount;
+}
+
+static bool CommandUsesExecutable(const wchar_t* command, const wchar_t* executablePath) {
+    if (!command || !executablePath) return false;
+
+    while (*command == L' ' || *command == L'\t') command++;
+
+    const wchar_t* pathStart = command;
+    const wchar_t* pathEnd = command;
+    if (*command == L'"') {
+        pathStart = ++command;
+        while (*command && *command != L'"') command++;
+        pathEnd = command;
+    } else {
+        while (*command && *command != L' ' && *command != L'\t') command++;
+        pathEnd = command;
+    }
+
+    if (pathEnd <= pathStart) return false;
+
+    wchar_t parsedPath[MAX_PATH * 2] = { 0 };
+    size_t pathLength = (size_t)(pathEnd - pathStart);
+    if (pathLength >= _countof(parsedPath)) return false;
+    wcsncpy_s(parsedPath, _countof(parsedPath), pathStart, pathLength);
+    return _wcsicmp(parsedPath, executablePath) == 0;
+}
+
+struct RunEntryRead {
+    bool accessible;
+    bool present;
+    bool matchesCurrentExecutable;
+};
+
+static RunEntryRead ReadRunEntry(const wchar_t* executablePath) {
+    RunEntryRead result = { true, false, false };
+    HKEY hKey = NULL;
+    LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &hKey);
+    if (openResult == ERROR_FILE_NOT_FOUND) return result;
+    if (openResult != ERROR_SUCCESS) {
+        result.accessible = false;
+        return result;
+    }
+
+    wchar_t command[2048] = { 0 };
+    DWORD type = 0;
+    DWORD size = sizeof(command);
+    LONG queryResult = RegQueryValueExW(hKey, APP_NAME, NULL, &type, (LPBYTE)command, &size);
+    RegCloseKey(hKey);
+    command[_countof(command) - 1] = L'\0';
+
+    if (queryResult == ERROR_FILE_NOT_FOUND) return result;
+    if (queryResult != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) || size < sizeof(wchar_t)) {
+        result.accessible = false;
+        result.present = true;
+        return result;
+    }
+
+    wchar_t expandedCommand[2048] = { 0 };
+    const wchar_t* commandToCompare = command;
+    if (type == REG_EXPAND_SZ) {
+        DWORD expandedLength = ExpandEnvironmentStringsW(command, expandedCommand, _countof(expandedCommand));
+        if (expandedLength == 0 || expandedLength > _countof(expandedCommand)) {
+            result.accessible = false;
+            result.present = true;
+            return result;
+        }
+        commandToCompare = expandedCommand;
+    }
+
+    result.present = true;
+    result.matchesCurrentExecutable = CommandUsesExecutable(commandToCompare, executablePath);
+    return result;
+}
+
+struct ApprovalEntryRead {
+    bool accessible;
+    bool present;
+    bool valid;
+    bool policyManaged;
+    BYTE state;
+};
+
+static ApprovalEntryRead ReadApprovalEntry() {
+    ApprovalEntryRead result = { true, false, false, false, 0 };
+    HKEY hKey = NULL;
+    LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER, APPROVED_KEY, 0, KEY_READ, &hKey);
+    if (openResult == ERROR_FILE_NOT_FOUND) return result;
+    if (openResult != ERROR_SUCCESS) {
+        result.accessible = false;
+        return result;
+    }
+
+    BYTE value[32] = { 0 };
+    DWORD type = 0;
+    DWORD size = sizeof(value);
+    LONG queryResult = RegQueryValueExW(hKey, APP_NAME, NULL, &type, value, &size);
+    RegCloseKey(hKey);
+
+    if (queryResult == ERROR_FILE_NOT_FOUND) return result;
+    result.present = true;
+    if (queryResult != ERROR_SUCCESS || type != REG_BINARY || size != 12) return result;
+
+    result.valid = true;
+    result.state = value[0];
+    result.policyManaged = result.state == 0x08 || result.state == 0x09;
+    return result;
+}
+
+static bool WriteApprovalState(BYTE state) {
+    HKEY hKey = NULL;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, APPROVED_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    BYTE value[12] = { state, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    LONG result = RegSetValueExW(hKey, APP_NAME, 0, REG_BINARY, value, sizeof(value));
+    RegCloseKey(hKey);
+    return result == ERROR_SUCCESS;
+}
+
+static bool DeleteApprovalState() {
+    HKEY hKey = NULL;
+    LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER, APPROVED_KEY, 0, KEY_SET_VALUE, &hKey);
+    if (openResult == ERROR_FILE_NOT_FOUND) return true;
+    if (openResult != ERROR_SUCCESS) return false;
+
+    LONG deleteResult = RegDeleteValueW(hKey, APP_NAME);
+    RegCloseKey(hKey);
+    return deleteResult == ERROR_SUCCESS || deleteResult == ERROR_FILE_NOT_FOUND;
+}
 
 void SetDefaults() {
     g_config.showNet         = true;
@@ -33,6 +168,7 @@ void SetDefaults() {
     g_config.netUnit         = NET_UNIT_BITS;
     g_config.clickThrough    = false;
     g_config.runAtStartup    = false;
+    g_config.useLocalSensors = false;
 
     g_config.themeMode       = THEME_AUTO;
     g_config.transparentBg   = true;
@@ -47,25 +183,25 @@ void SetDefaults() {
 
 void LoadConfig() {
     SetDefaults();
-    g_config.runAtStartup = IsAutostartEnabled();
+    g_config.runAtStartup = QueryAutostartStatus().status == AUTOSTART_ENABLED;
 
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, CONFIG_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         auto ReadDword = [&](const wchar_t* name, int& target) {
-            DWORD val = 0, size = sizeof(DWORD);
-            if (RegQueryValueExW(hKey, name, NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
+            DWORD val = 0, size = sizeof(DWORD), type = 0;
+            if (RegQueryValueExW(hKey, name, NULL, &type, (LPBYTE)&val, &size) == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD)) {
                 target = (int)val;
             }
         };
         auto ReadBool = [&](const wchar_t* name, bool& target) {
-            DWORD val = 0, size = sizeof(DWORD);
-            if (RegQueryValueExW(hKey, name, NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
+            DWORD val = 0, size = sizeof(DWORD), type = 0;
+            if (RegQueryValueExW(hKey, name, NULL, &type, (LPBYTE)&val, &size) == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD)) {
                 target = (val != 0);
             }
         };
         auto ReadColor = [&](const wchar_t* name, COLORREF& target) {
-            DWORD val = 0, size = sizeof(DWORD);
-            if (RegQueryValueExW(hKey, name, NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
+            DWORD val = 0, size = sizeof(DWORD), type = 0;
+            if (RegQueryValueExW(hKey, name, NULL, &type, (LPBYTE)&val, &size) == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD)) {
                 target = (COLORREF)val;
             }
         };
@@ -91,6 +227,7 @@ void LoadConfig() {
         ReadDword(L"RefreshRate", g_config.refreshRateMs);
         ReadDword(L"NetUnit", g_config.netUnit);
         ReadBool(L"ClickThrough", g_config.clickThrough);
+        ReadBool(L"UseLocalSensors", g_config.useLocalSensors);
 
         ReadDword(L"ThemeMode", g_config.themeMode);
         ReadBool(L"TransparentBg", g_config.transparentBg);
@@ -102,14 +239,28 @@ void LoadConfig() {
         ReadColor(L"ColDivider", g_config.colDivider);
         ReadColor(L"ColBg", g_config.colBackground);
 
-        DWORD size = sizeof(g_config.targetDrive);
-        RegQueryValueExW(hKey, L"TargetDrive", NULL, NULL, (LPBYTE)g_config.targetDrive, &size);
-
-        size = sizeof(g_config.fontFamily);
-        RegQueryValueExW(hKey, L"FontFamily", NULL, NULL, (LPBYTE)g_config.fontFamily, &size);
+        auto ReadString = [&](const wchar_t* name, wchar_t* target, DWORD capacity) {
+            DWORD type = 0, size = capacity * sizeof(wchar_t);
+            wchar_t buffer[64] = {};
+            if (RegQueryValueExW(hKey, name, NULL, &type, (LPBYTE)buffer, &size) == ERROR_SUCCESS &&
+                type == REG_SZ && size >= sizeof(wchar_t) && size <= capacity * sizeof(wchar_t) &&
+                size % sizeof(wchar_t) == 0 && buffer[size / sizeof(wchar_t) - 1] == L'\0') {
+                wcscpy_s(target, capacity, buffer);
+            }
+        };
+        ReadString(L"TargetDrive", g_config.targetDrive, 8);
+        ReadString(L"FontFamily", g_config.fontFamily, 64);
 
         RegCloseKey(hKey);
     }
+    if (g_config.alignment < ALIGN_LEFT || g_config.alignment > ALIGN_CUSTOM) g_config.alignment = ALIGN_LEFT;
+    if (g_config.netUnit < NET_UNIT_BYTES || g_config.netUnit > NET_UNIT_BITS) g_config.netUnit = NET_UNIT_BITS;
+    if (g_config.themeMode < THEME_AUTO || g_config.themeMode > THEME_CUSTOM) g_config.themeMode = THEME_AUTO;
+    if (g_config.itemSpacing < 0 || g_config.itemSpacing > 100) g_config.itemSpacing = 10;
+    if (g_config.fontSize < 1 || g_config.fontSize > 24) g_config.fontSize = 11;
+    if (g_config.refreshRateMs < 100 || g_config.refreshRateMs > 10000) g_config.refreshRateMs = 1000;
+    if (g_config.targetDrive[0] < L'A' || g_config.targetDrive[0] > L'Z' ||
+        wcscmp(g_config.targetDrive + 1, L":\\") != 0) wcscpy_s(g_config.targetDrive, L"C:\\");
 }
 
 void SaveConfig() {
@@ -144,6 +295,7 @@ void SaveConfig() {
         WriteDword(L"RefreshRate", (DWORD)g_config.refreshRateMs);
         WriteDword(L"NetUnit", (DWORD)g_config.netUnit);
         WriteBool(L"ClickThrough", g_config.clickThrough);
+        WriteBool(L"UseLocalSensors", g_config.useLocalSensors);
 
         WriteDword(L"ThemeMode", (DWORD)g_config.themeMode);
         WriteBool(L"TransparentBg", g_config.transparentBg);
@@ -160,7 +312,6 @@ void SaveConfig() {
 
         RegCloseKey(hKey);
     }
-    SetAutostart(g_config.runAtStartup);
 }
 
 int CalculateTotalWidth(HDC) {
@@ -207,44 +358,72 @@ int CalculateTotalWidth(HDC) {
 }
 
 bool IsAutostartEnabled() {
-    wchar_t exePath[MAX_PATH] = { 0 };
-    if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0) return false;
-
-    HKEY hKey = NULL;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
-        return false;
-    }
-
-    wchar_t buffer[MAX_PATH * 2] = { 0 };
-    DWORD size = sizeof(buffer);
-    LONG res = RegQueryValueExW(hKey, APP_NAME, NULL, NULL, (LPBYTE)buffer, &size);
-    RegCloseKey(hKey);
-    if (res != ERROR_SUCCESS) return false;
-
-    wchar_t expected[MAX_PATH * 2] = { 0 };
-    swprintf(expected, MAX_PATH * 2, L"\"%ls\"", exePath);
-    return (wcsstr(buffer, expected) != NULL);
+    return QueryAutostartStatus().status == AUTOSTART_ENABLED;
 }
 
-void SetAutostart(bool enable) {
-    HKEY hKey = NULL;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
-        return;
+AutostartInfo QueryAutostartStatus() {
+    AutostartInfo info = { AUTOSTART_UNAVAILABLE, false, false, false };
+    wchar_t exePath[MAX_PATH * 2] = { 0 };
+    if (!GetCurrentExecutablePath(exePath, _countof(exePath))) return info;
+
+    RunEntryRead runEntry = ReadRunEntry(exePath);
+    if (!runEntry.accessible) return info;
+    if (!runEntry.present) {
+        info.status = AUTOSTART_NOT_CONFIGURED;
+        return info;
     }
 
+    info.hasRunEntry = true;
+    if (!runEntry.matchesCurrentExecutable) {
+        info.status = AUTOSTART_OTHER_PATH;
+        return info;
+    }
+
+    ApprovalEntryRead approval = ReadApprovalEntry();
+    if (!approval.accessible || (approval.present && !approval.valid)) return info;
+
+    info.hasApprovalEntry = approval.present;
+    info.isPolicyManaged = approval.policyManaged;
+    if (!approval.present || approval.state == 0x02 || approval.state == 0x06) {
+        info.status = AUTOSTART_ENABLED;
+    } else if (approval.state == 0x03 || approval.state == 0x07) {
+        info.status = AUTOSTART_DISABLED_BY_SYSTEM;
+    }
+    return info;
+}
+
+bool SetAutostart(bool enable) {
     if (enable) {
-        wchar_t exePath[MAX_PATH] = { 0 };
-        if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0) {
-            RegCloseKey(hKey);
-            return;
+        wchar_t exePath[MAX_PATH * 2] = { 0 };
+        if (!GetCurrentExecutablePath(exePath, _countof(exePath))) return false;
+
+        HKEY hKey = NULL;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+            return false;
         }
 
-        wchar_t cmd[MAX_PATH * 2] = { 0 };
-        swprintf(cmd, MAX_PATH * 2, L"\"%ls\" --autostart", exePath);
-        DWORD cb = (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t));
-        RegSetValueExW(hKey, APP_NAME, 0, REG_SZ, (const BYTE*)cmd, cb);
-    } else {
-        RegDeleteValueW(hKey, APP_NAME);
+        wchar_t command[MAX_PATH * 2] = { 0 };
+        swprintf(command, _countof(command), L"\"%ls\" --autostart", exePath);
+        DWORD byteCount = (DWORD)((wcslen(command) + 1) * sizeof(wchar_t));
+        LONG writeResult = RegSetValueExW(hKey, APP_NAME, 0, REG_SZ, (const BYTE*)command, byteCount);
+        RegCloseKey(hKey);
+        if (writeResult != ERROR_SUCCESS) return false;
+
+        if (!WriteApprovalState(0x02)) return false;
+        return QueryAutostartStatus().status == AUTOSTART_ENABLED;
     }
-    RegCloseKey(hKey);
+
+    bool success = true;
+    HKEY hKey = NULL;
+    LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &hKey);
+    if (openResult == ERROR_SUCCESS) {
+        LONG deleteResult = RegDeleteValueW(hKey, APP_NAME);
+        success = deleteResult == ERROR_SUCCESS || deleteResult == ERROR_FILE_NOT_FOUND;
+        RegCloseKey(hKey);
+    } else if (openResult != ERROR_FILE_NOT_FOUND) {
+        success = false;
+    }
+
+    if (!DeleteApprovalState()) success = false;
+    return success && QueryAutostartStatus().status == AUTOSTART_NOT_CONFIGURED;
 }

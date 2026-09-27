@@ -1,6 +1,8 @@
 #include <windows.h>
+#include "Resource.h"
 
 1 24 "TaskbarMonitor.manifest"
+IDI_TASKBARMONITOR ICON "TaskbarMonitor.ico"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     1,2,0,0

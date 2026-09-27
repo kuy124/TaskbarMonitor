@@ -6,22 +6,37 @@
 #include "Renderer.h"
 #include "TaskbarSync.h"
 #include "SettingsWindow.h"
+#include "StartupDialog.h"
 #include "License.h"
+#include "Resource.h"
 
 HWND g_hWnd = NULL;
 UINT g_uTaskbarCreatedMsg = 0;
 NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
 
+static void RefreshTrayTooltip() {
+    if (!g_hWnd) return;
+    swprintf(g_nid.szTip, _countof(g_nid.szTip), L"TaskbarMonitor | CPU %.0f%% | RAM %.0f%%",
+             g_metrics.cpuUsage, g_metrics.memUsage);
+    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == g_uTaskbarCreatedMsg) {
+        Shell_NotifyIconW(NIM_ADD, &g_nid);
         AttachToTaskbar(hWnd);
+        InitTaskbarHooks(hWnd);
         SyncWithTaskbar(hWnd);
         return 0;
     }
 
     switch (msg) {
-    case WM_CREATE:
+    case WM_CREATE: {
         LoadConfig();
+        LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+        if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
+        else exStyle &= ~WS_EX_TRANSPARENT;
+        SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
         g_curWidth = CalculateTotalWidth();
         UpdateThemeColors();
         InitMetrics();
@@ -29,6 +44,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         AttachToTaskbar(hWnd);
         SyncWithTaskbar(hWnd);
         break;
+    }
 
     case WM_LBUTTONDBLCLK:
     case WM_LBUTTONDOWN:
@@ -86,6 +102,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (wParam == TIMER_METRICS) {
             UpdateAllMetrics();
+            RefreshTrayTooltip();
             InvalidateRect(hWnd, NULL, FALSE);
         }
         break;
@@ -129,6 +146,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     wc.hInstance = hInstance;
     wc.lpszClassName = L"TaskbarMonitor";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_TASKBARMONITOR));
+    wc.hIconSm = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_TASKBARMONITOR),
+                                  IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                  GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     RegisterClassExW(&wc);
 
     DWORD style = g_hTaskbar ? (WS_CHILD | WS_CLIPSIBLINGS) : WS_POPUP;
@@ -160,33 +181,31 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     g_nid.uID = 1001;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    g_nid.hIcon = wc.hIconSm;
     wcscpy_s(g_nid.szTip, L"TaskbarMonitor");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
     InitTaskbarHooks(g_hWnd);
     UpdateAllMetrics();
+    RefreshTrayTooltip();
     SyncWithTaskbar(g_hWnd);
-    ShowWindow(g_hWnd, SW_SHOWNOACTIVATE);
     UpdateWindow(g_hWnd);
 
+    bool openSettings = (pCmdLine && wcsstr(pCmdLine, L"--settings") != NULL);
     bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);
-    if (!bAutoStart) {
-        wchar_t prompt[300];
-        swprintf(prompt, 300,
-            L"Update the Windows startup entry to point to this copy of TaskbarMonitor?\r\n\r\n"
-            L"This makes it launch automatically every time Windows starts.\r\n"
-            L"You can change this later in Settings (Advanced tab).");
-        int choice = MessageBoxW(g_hWnd, prompt, L"TaskbarMonitor",
-            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1);
-        if (choice == IDYES) {
-            g_config.runAtStartup = true;
-            SetAutostart(true);
+    if (openSettings) {
+        OpenSettingsWindow(hInstance, g_hWnd);
+    } else if (!bAutoStart) {
+        AutostartInfo autostartInfo = QueryAutostartStatus();
+        if (autostartInfo.status != AUTOSTART_ENABLED) {
+            ShowAutostartDialog(hInstance, g_hWnd, autostartInfo);
+            g_config.runAtStartup = IsAutostartEnabled();
         }
     }
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {
+        if (g_hSettingsWnd && IsWindow(g_hSettingsWnd) && IsDialogMessageW(g_hSettingsWnd, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

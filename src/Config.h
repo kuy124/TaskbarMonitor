@@ -54,6 +54,7 @@ struct MonitorConfig {
     int netUnit;          // NetUnit
     bool clickThrough;    // Mouse clicks pass through
     bool runAtStartup;
+    bool useLocalSensors;
 
     // Theme & Colors
     int themeMode;        // ThemeMode
@@ -67,6 +68,21 @@ struct MonitorConfig {
     COLORREF colBackground;
 };
 
+enum AutostartStatus {
+    AUTOSTART_NOT_CONFIGURED = 0,
+    AUTOSTART_ENABLED = 1,
+    AUTOSTART_DISABLED_BY_SYSTEM = 2,
+    AUTOSTART_OTHER_PATH = 3,
+    AUTOSTART_UNAVAILABLE = 4
+};
+
+struct AutostartInfo {
+    AutostartStatus status;
+    bool hasRunEntry;
+    bool hasApprovalEntry;
+    bool isPolicyManaged;
+};
+
 extern MonitorConfig g_config;
 extern int g_curWidth;
 
@@ -76,4 +92,5 @@ void SaveConfig();
 int CalculateTotalWidth(HDC hdc = NULL);
 
 bool IsAutostartEnabled();
-void SetAutostart(bool enable);
+AutostartInfo QueryAutostartStatus();
+bool SetAutostart(bool enable);

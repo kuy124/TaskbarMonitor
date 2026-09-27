@@ -1,7 +1,7 @@
 CXX = g++
 RC = windres
 CXXFLAGS = -O3 -mwindows -municode -Wall -Wextra -std=c++17 -Isrc
-LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32 -lcomdlg32 -lole32 -loleaut32 -lwbemuuid
+LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32 -lcomdlg32 -lole32 -loleaut32 -lwbemuuid -lwinhttp
 
 SRCS = src/Config.cpp \
        src/Theme.cpp \
@@ -9,6 +9,7 @@ SRCS = src/Config.cpp \
        src/Renderer.cpp \
        src/TaskbarSync.cpp \
        src/SettingsWindow.cpp \
+       src/StartupDialog.cpp \
        src/License.cpp \
        src/Main.cpp
 
@@ -20,7 +21,7 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $@ $(CXXFLAGS) $(LDFLAGS)
 
-src/TaskbarMonitor.res.o: src/TaskbarMonitor.rc src/TaskbarMonitor.manifest
+src/TaskbarMonitor.res.o: src/TaskbarMonitor.rc src/TaskbarMonitor.manifest src/TaskbarMonitor.ico src/Resource.h
 	$(RC) -i src/TaskbarMonitor.rc -o $@
 
 %.o: %.cpp
