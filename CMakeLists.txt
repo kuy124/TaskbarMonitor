@@ -13,6 +13,7 @@ set(SOURCES
     src/Theme.h
     src/Theme.cpp
     src/Metrics.h
+    src/TemperatureEstimate.h
     src/SensorFeed.h
     src/Metrics.cpp
     src/Renderer.h
@@ -68,4 +69,12 @@ if (BUILD_TESTING)
         target_compile_options(SensorFeedTest PRIVATE -UNDEBUG)
     endif()
     add_test(NAME SensorFeedTest COMMAND SensorFeedTest)
+    add_executable(TemperatureEstimateTest tests/TemperatureEstimateTest.cpp)
+    target_include_directories(TemperatureEstimateTest PRIVATE src)
+    if (MSVC)
+        target_compile_options(TemperatureEstimateTest PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(TemperatureEstimateTest PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME TemperatureEstimateTest COMMAND TemperatureEstimateTest)
 endif()

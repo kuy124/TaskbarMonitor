@@ -3,9 +3,9 @@
 
 struct SystemMetrics {
     double cpuUsage;
-    double cpuTemp;       // Temperature in Celsius (-1 if unsupported)
+    double cpuTemp;       // Temperature in Celsius
     double gpuUsage;
-    double gpuTemp;       // Temperature in Celsius (-1 if unsupported)
+    double gpuTemp;       // Temperature in Celsius
     double memUsage;
     double memUsedGB;
     double diskUsage;
@@ -15,6 +15,8 @@ struct SystemMetrics {
     double batteryPercent; // 0 - 100
     bool batteryCharging;
     bool hasBattery;
+    bool cpuTempEstimated;
+    bool gpuTempEstimated;
 };
 
 extern SystemMetrics g_metrics;

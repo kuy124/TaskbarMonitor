@@ -14,15 +14,15 @@ The monitor renders a two-row status block directly onto the taskbar.
 | :--- | :--- | :--- |
 | Network | Upload / Download speed | GetIfTable2 across active non-loopback interfaces |
 | CPU Usage | CPU % | GetSystemTimes kernel, idle, and user differentials |
-| CPU Temp | Degrees Celsius | PDH thermal zones or WMI MSAcpi_ThermalZoneTemperature |
+| CPU Temp | Degrees Celsius | PDH thermal zones, WMI MSAcpi_ThermalZoneTemperature, or load-based estimate |
 | GPU Usage | GPU % | PDH \GPU Engine(*)\Utilization Percentage (capped at 100%) |
-| GPU Temp | Degrees Celsius | NVIDIA NVML, NVAPI, or AMD ADL |
+| GPU Temp | Degrees Celsius | NVIDIA NVML, NVAPI, AMD ADL, or load-based estimate |
 | Memory | RAM % and Used GB | GlobalMemoryStatusEx |
 | Disk | Activity % and Free Space | PDH PhysicalDisk(_Total) and GetDiskFreeSpaceExW |
 | Battery | Charge % and AC status | GetSystemPowerStatus (hides automatically on AC-only desktops) |
 | Uptime | System uptime | GetTickCount64 |
 
-If a system lacks an exposed thermal sensor, its temperature displays as N/A rather than a load-based estimate. In Advanced settings, optional local LibreHardwareMonitor support can read real CPU and GPU temperatures from its web server at `http://127.0.0.1:8085/data.json` when enabled in that tool. This does not start the server or require the tool for other metrics. LibreHardwareMonitor's server may listen on non-loopback interfaces; check its binding and firewall before enabling it.
+If a system lacks an exposed thermal sensor, the monitor shows a load-based temperature estimate prefixed with `~`. This is an approximation, not a sensor reading. In System settings, optional local LibreHardwareMonitor support can read real CPU and GPU temperatures from its web server at `http://127.0.0.1:8085/data.json` when enabled in that tool. This does not start the server or require the tool for other metrics. LibreHardwareMonitor's server may listen on non-loopback interfaces; check its binding and firewall before enabling it.
 
 ## Settings
 
@@ -110,7 +110,7 @@ These are loaded dynamically via LoadLibraryW when present:
 - nvapi64.dll or nvapi.dll: NVIDIA API fallback
 - atiadlxx.dll or atiadlxy.dll: AMD Display Library (temperature)
 
-If none are present and the optional local sensor feed is unavailable, temperature displays as N/A.
+If none are present and the optional local sensor feed is unavailable, temperature falls back to a load-based estimate marked with `~`.
 
 ## Configuration & Uninstallation
 

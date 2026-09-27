@@ -1,11 +1,12 @@
 #include "Metrics.h"
 #include "Config.h"
 #include "SensorFeed.h"
+#include "TemperatureEstimate.h"
 #include <unordered_map>
 #include <algorithm>
 #include <winhttp.h>
 
-SystemMetrics g_metrics = { 0.0, -1.0, 0.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 100.0, false, false };
+SystemMetrics g_metrics = { 0.0, -1.0, 0.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 100.0, false, false, false, false };
 
 static FILETIME g_prevIdleTime = {0}, g_prevKernelTime = {0}, g_prevUserTime = {0};
 static PDH_HQUERY g_hPdhQuery = NULL;
@@ -23,6 +24,7 @@ static bool g_pdhReady = false;
 static ULONGLONG g_lastLocalPoll = 0;
 static SensorTemperatures g_localTemperatures;
 static ULONGLONG g_lastWmiPoll = 0;
+static double g_lastWmiTemp = -1.0;
 
 static SensorTemperatures ReadLocalTemperatures() {
     SensorTemperatures result;
@@ -223,6 +225,7 @@ void UpdateCPUTemp() {
 
     if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.cpu >= 0.0) {
         g_metrics.cpuTemp = g_localTemperatures.cpu;
+        g_metrics.cpuTempEstimated = false;
         return;
     }
 
@@ -236,6 +239,7 @@ void UpdateCPUTemp() {
                 double c = cv.doubleValue - 273.15;
                 if (c >= 20.0 && c <= 115.0) {
                     g_metrics.cpuTemp = c;
+                    g_metrics.cpuTempEstimated = false;
                     foundSensor = true;
                 }
             }
@@ -244,8 +248,14 @@ void UpdateCPUTemp() {
 
     // 2. Query WMI MSAcpi_ThermalZoneTemperature
     ULONGLONG now = GetTickCount64();
+    if (!foundSensor && g_lastWmiPoll != 0 && now - g_lastWmiPoll < 5000 && g_lastWmiTemp >= 0.0) {
+        g_metrics.cpuTemp = g_lastWmiTemp;
+        g_metrics.cpuTempEstimated = false;
+        foundSensor = true;
+    }
     if (!foundSensor && (g_lastWmiPoll == 0 || now - g_lastWmiPoll >= 5000)) {
         g_lastWmiPoll = now;
+        g_lastWmiTemp = -1.0;
         if (!g_wmiInitialized) InitWmi();
         if (g_pWbemServices) {
             BSTR bstrQuery = SysAllocString(L"SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
@@ -276,14 +286,20 @@ void UpdateCPUTemp() {
                 }
                 pEnumerator->Release();
                 if (maxTemp > 0.0) {
+                    g_lastWmiTemp = maxTemp;
                     g_metrics.cpuTemp = maxTemp;
+                    g_metrics.cpuTempEstimated = false;
                     foundSensor = true;
                 }
             }
         }
     }
 
-    if (!foundSensor) g_metrics.cpuTemp = -1.0;
+    if (!foundSensor) {
+        g_metrics.cpuTemp = EstimateTemperature(g_metrics.cpuUsage, g_metrics.cpuTemp,
+                                                g_metrics.cpuTempEstimated, 38.0, 42.0);
+        g_metrics.cpuTempEstimated = true;
+    }
 }
 
 void UpdateGPUTemp() {
@@ -291,6 +307,7 @@ void UpdateGPUTemp() {
 
     if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.gpu >= 0.0) {
         g_metrics.gpuTemp = g_localTemperatures.gpu;
+        g_metrics.gpuTempEstimated = false;
         return;
     }
 
@@ -301,6 +318,7 @@ void UpdateGPUTemp() {
         unsigned int temp = 0;
         if (g_nvmlDeviceGetTemperature(g_nvmlDevice, 0, &temp) == 0 && temp > 0 && temp < 125) {
             g_metrics.gpuTemp = (double)temp;
+            g_metrics.gpuTempEstimated = false;
             foundSensor = true;
         }
     }
@@ -312,6 +330,7 @@ void UpdateGPUTemp() {
         if (g_NvAPI_GPU_GetThermalSettings(g_nvGpuHandles[0], 0, &nts) == 0) {
             if (nts.count > 0 && nts.sensor[0].currentTemp > 0 && nts.sensor[0].currentTemp < 125) {
                 g_metrics.gpuTemp = (double)nts.sensor[0].currentTemp;
+                g_metrics.gpuTempEstimated = false;
                 foundSensor = true;
             }
         }
@@ -323,12 +342,17 @@ void UpdateGPUTemp() {
         if (g_ADL_Overdrive5_Temperature_Get(0, 0, &adlTemp) == 0) {
             if (adlTemp.iTemperature > 0) {
                 g_metrics.gpuTemp = (double)adlTemp.iTemperature / 1000.0;
+                g_metrics.gpuTempEstimated = false;
                 foundSensor = true;
             }
         }
     }
 
-    if (!foundSensor) g_metrics.gpuTemp = -1.0;
+    if (!foundSensor) {
+        g_metrics.gpuTemp = EstimateTemperature(g_metrics.gpuUsage, g_metrics.gpuTemp,
+                                                g_metrics.gpuTempEstimated, 36.0, 38.0);
+        g_metrics.gpuTempEstimated = true;
+    }
 }
 
 void UpdateGPU() {

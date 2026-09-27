@@ -532,7 +532,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
         CreateWindowExW(0, L"STATIC", L"Network units", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 268, 180, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
         HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST, 235, 264, 195, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
-        CreateWindowExW(0, L"STATIC", L"Unavailable temperatures show N/A.", WS_CHILD | SS_LEFT | SS_NOPREFIX,
+        CreateWindowExW(0, L"STATIC", L"Estimated temperatures show ~ when sensors are unavailable.", WS_CHILD | SS_LEFT | SS_NOPREFIX,
             0, 0, 0, 0, hWnd, (HMENU)IDC_LBL_METRIC_NOTE, NULL, NULL);
 
         // --- TAB 1: Position and Layout ---

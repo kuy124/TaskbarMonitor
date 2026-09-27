@@ -99,27 +99,27 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
             col.hasRow2 = true;
             wcscpy_s(col.row1.label, L"C°");
             if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            else swprintf(col.row1.value, 32, L"%ls%.0f°C", g_metrics.cpuTempEstimated ? L"~" : L"", g_metrics.cpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
 
             wcscpy_s(col.row2.label, L"G°");
             if (g_metrics.gpuTemp < 0) wcscpy_s(col.row2.value, L"N/A");
-            else swprintf(col.row2.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            else swprintf(col.row2.value, 32, L"%ls%.0f°C", g_metrics.gpuTempEstimated ? L"~" : L"", g_metrics.gpuTemp);
             col.row2.colLabel = g_theme.label;
             col.row2.colValue = g_theme.value;
         } else if (g_config.showCPUTemp) {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"C°");
             if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
+            else swprintf(col.row1.value, 32, L"%ls%.0f°C", g_metrics.cpuTempEstimated ? L"~" : L"", g_metrics.cpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         } else {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"G°");
             if (g_metrics.gpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.gpuTemp);
+            else swprintf(col.row1.value, 32, L"%ls%.0f°C", g_metrics.gpuTempEstimated ? L"~" : L"", g_metrics.gpuTemp);
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         }
