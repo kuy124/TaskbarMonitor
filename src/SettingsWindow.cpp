@@ -1042,7 +1042,7 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
     HDC screen = GetDC(NULL);
     s_dpi = screen ? (UINT)GetDeviceCaps(screen, LOGPIXELSX) : 96;
     if (screen) ReleaseDC(NULL, screen);
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     RECT frame = { 0, 0, Px(760), Px(560) };
     AdjustWindowRectEx(&frame, style, FALSE, 0);
     int winW = frame.right - frame.left;
@@ -1058,6 +1058,12 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
         posX, posY, winW, winH,
         NULL, NULL, hInstance, NULL
     );
+    if (!g_hSettingsWnd) return;
+    // Show explicitly. WS_VISIBLE in the creation style is not honoured when
+    // the process was started hidden, and an unshown settings window cannot
+    // be reached by the user.
+    ShowWindow(g_hSettingsWnd, SW_SHOW);
+    SetForegroundWindow(g_hSettingsWnd);
 }
 
 void CloseSettingsWindow() {

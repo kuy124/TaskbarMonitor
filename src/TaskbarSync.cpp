@@ -3,10 +3,11 @@
 #include "TaskbarPlacement.h"
 #include <uiautomation.h>
 #include <atomic>
+#include <mutex>
 #include <vector>
 
 HWND g_hTaskbar = NULL;
-static HWND g_hMainWnd = NULL;
+static std::atomic<HWND> g_hMainWnd{nullptr};
 static HWINEVENTHOOK g_hHookLoc = NULL;
 static HWINEVENTHOOK g_hHookShow = NULL;
 static HWINEVENTHOOK g_hHookHide = NULL;
@@ -15,12 +16,22 @@ static DWORD g_hookPid = 0;
 static HWND g_hookTaskbar = NULL;
 static std::atomic<bool> g_syncPending{false};
 static UINT g_placementTimerMs = 0;
+static bool g_syncing = false;
+
+// Measuring the taskbar needs UI Automation, which blocks for tens to hundreds
+// of milliseconds. On the UI thread that froze the settings window and every
+// other window this app owns, so the measurement runs on a worker thread and
+// publishes a snapshot that the UI thread only reads.
+static std::mutex g_layoutLock;
+static TaskbarLayoutSnapshot g_layout;
+static HANDLE g_scanThread = NULL;
+static HANDLE g_scanEvent = NULL;
+static std::atomic<bool> g_scanStop{false};
+
+// Worker-thread-only UI Automation state.
 static IUIAutomation* g_uia = NULL;
 static IUIAutomationElement* g_uiaRoot = NULL;
-static bool g_comInitialized = false;
-
-static TaskbarLayoutSnapshot g_layout;
-static bool g_syncing = false;
+static HWND g_uiaTaskbar = NULL;
 
 static void RequestTaskbarSync() {
     // Explorer emits events during UIA queries and sibling reordering. Posting
@@ -29,10 +40,14 @@ static void RequestTaskbarSync() {
     g_syncPending = true;
 }
 
-static void SetPlacementTimer(HWND hWnd, UINT intervalMs) {
-    if (g_placementTimerMs != intervalMs) {
+static void RequestScan() {
+    if (g_scanEvent) SetEvent(g_scanEvent);
+}
+
+static void SetPlacementTimer(HWND hWnd, int intervalMs) {
+    if (g_placementTimerMs != (UINT)intervalMs) {
         SetTimer(hWnd, TIMER_PLACEMENT, intervalMs, NULL);
-        g_placementTimerMs = intervalMs;
+        g_placementTimerMs = (UINT)intervalMs;
     }
 }
 
@@ -45,20 +60,28 @@ static bool IntersectsBand(const RECT& r, int y, int height) {
            r.bottom > y && r.top < y + height;
 }
 
+// --- Worker thread -----------------------------------------------------------
+// Everything below runs on the scan worker, never on the UI thread.
+
 static void ReleaseUiaTaskbar() {
     if (g_uiaRoot) { g_uiaRoot->Release(); g_uiaRoot = NULL; }
+    g_uiaTaskbar = NULL;
 }
 
-static void BindUiaTaskbar() {
+static void BindUiaTaskbar(HWND taskbar) {
+    if (g_uiaTaskbar == taskbar && g_uiaRoot) return;
     ReleaseUiaTaskbar();
-    if (!g_uia || !g_hTaskbar) return;
-    HWND bridge = FindWindowExW(g_hTaskbar, NULL,
+    if (!g_uia || !taskbar) return;
+    HWND bridge = FindWindowExW(taskbar, NULL,
         L"Windows.UI.Composition.DesktopWindowContentBridge", NULL);
-    if (bridge) g_uia->ElementFromHandle(bridge, &g_uiaRoot);
+    if (bridge) {
+        g_uia->ElementFromHandle(bridge, &g_uiaRoot);
+        g_uiaTaskbar = taskbar;
+    }
 }
 
 // UI Automation exposes XAML Search and app buttons that have no useful HWND bounds.
-static bool AddAutomationButtons(int y, int height, int& trayLeft,
+static bool AddAutomationButtons(HWND taskbar, int y, int height, int& trayLeft,
                                  std::vector<OccupiedSpan>& spans) {
     if (!g_uia || !g_uiaRoot) return false;
     VARIANT value = {};
@@ -99,20 +122,21 @@ static bool AddAutomationButtons(int y, int height, int& trayLeft,
             trayLeft = std::min(trayLeft, static_cast<int>(rect.left));
         if (className) SysFreeString(className);
         ++visibleCount;
-        MapWindowPoints(NULL, g_hTaskbar, reinterpret_cast<POINT*>(&rect), 2);
+        MapWindowPoints(NULL, taskbar, reinterpret_cast<POINT*>(&rect), 2);
         spans.push_back({rect.left, rect.right});
     }
     buttons->Release();
     return SUCCEEDED(hr) && visibleCount > 0;
 }
 
-static bool GetOccupiedSpans(int y, int height, int& trayLeft,
-                             std::vector<OccupiedSpan>& spans) {
+static bool MeasureTaskbar(HWND taskbar, int& trayLeft,
+                            std::vector<OccupiedSpan>& spans) {
     RECT client = {};
-    GetClientRect(g_hTaskbar, &client);
+    GetClientRect(taskbar, &client);
     POINT origin = {0, 0};
-    ClientToScreen(g_hTaskbar, &origin);
-    int screenY = origin.y + y;
+    ClientToScreen(taskbar, &origin);
+    int screenY = origin.y;
+    int height = client.bottom - client.top;
     trayLeft = origin.x + client.right;
     bool hasTray = false;
     bool hasButtons = false;
@@ -120,7 +144,7 @@ static bool GetOccupiedSpans(int y, int height, int& trayLeft,
     bool unknownFullWidth = false;
     int buttonsLeft = client.right;
     std::vector<HWND> children;
-    EnumChildWindows(g_hTaskbar, [](HWND child, LPARAM data) -> BOOL {
+    EnumChildWindows(taskbar, [](HWND child, LPARAM data) -> BOOL {
         reinterpret_cast<std::vector<HWND>*>(data)->push_back(child);
         return TRUE;
     }, reinterpret_cast<LPARAM>(&children));
@@ -130,12 +154,13 @@ static bool GetOccupiedSpans(int y, int height, int& trayLeft,
         L"Windows.UI.Composition.DesktopWindowContentBridge"
     };
     for (const wchar_t* cls : shellClasses) {
-        HWND child = FindWindowExW(g_hTaskbar, NULL, cls, NULL);
+        HWND child = FindWindowExW(taskbar, NULL, cls, NULL);
         if (child && std::find(children.begin(), children.end(), child) == children.end())
             children.push_back(child);
     }
     for (HWND child : children) {
-        if (child == g_hMainWnd || IsChild(g_hMainWnd, child) ||
+        HWND mainWnd = g_hMainWnd.load();
+        if (child == mainWnd || IsChild(mainWnd, child) ||
             !IsWindowVisible(child)) continue;
         RECT rect = {};
         if (!GetWindowRect(child, &rect) || !IntersectsBand(rect, screenY, height)) continue;
@@ -145,7 +170,7 @@ static bool GetOccupiedSpans(int y, int height, int& trayLeft,
             hasComposition = true;
             continue;
         }
-        MapWindowPoints(NULL, g_hTaskbar, reinterpret_cast<POINT*>(&rect), 2);
+        MapWindowPoints(NULL, taskbar, reinterpret_cast<POINT*>(&rect), 2);
         if (rect.right <= 0 || rect.left >= client.right) continue;
         if (wcscmp(cls, L"TrayNotifyWnd") == 0) {
             hasTray = true;
@@ -162,9 +187,9 @@ static bool GetOccupiedSpans(int y, int height, int& trayLeft,
         spans.push_back({rect.left, rect.right});
     }
     if (unknownFullWidth) return false;
-    if (hasComposition && !g_uiaRoot) BindUiaTaskbar();
+    if (hasComposition) BindUiaTaskbar(taskbar);
     bool automationReady = hasComposition &&
-                           AddAutomationButtons(screenY, height, trayLeft, spans);
+                           AddAutomationButtons(taskbar, screenY, height, trayLeft, spans);
     if (hasComposition && !automationReady) ReleaseUiaTaskbar();
     if (automationReady) {
         trayLeft -= origin.x;
@@ -172,13 +197,65 @@ static bool GetOccupiedSpans(int y, int height, int& trayLeft,
     }
     trayLeft -= origin.x;
     if (!hasComposition && hasButtons && hasTray) {
-        int safeLeft = std::max(0, buttonsLeft -
-                                 static_cast<int>(client.bottom - client.top) - 8);
+        int safeLeft = std::max(0, buttonsLeft - height - 8);
         spans.push_back({safeLeft, trayLeft});
         return true;
     }
     return false;
 }
+
+static DWORD WINAPI ScanThread(LPVOID) {
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER,
+                     IID_IUIAutomation, reinterpret_cast<void**>(&g_uia));
+    ULONGLONG lastScan = 0;
+    while (!g_scanStop.load()) {
+        // Wait for a request, but refresh on our own at least once a second so
+        // the snapshot never goes stale even if no shell event arrives.
+        if (WaitForSingleObject(g_scanEvent, 1000) == WAIT_FAILED) break;
+        if (g_scanStop.load()) break;
+        ULONGLONG now = GetTickCount64();
+        // Explorer's own events fire during a query, so coalesce bursts.
+        if (lastScan && now - lastScan < 250) continue;
+        lastScan = now;
+        HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+        if (!taskbar || !IsWindow(taskbar)) continue;
+        std::vector<OccupiedSpan> spans;
+        int trayLeft = 0;
+        if (!MeasureTaskbar(taskbar, trayLeft, spans)) continue;
+        RECT client = {};
+        GetClientRect(taskbar, &client);
+        TaskbarLayoutSnapshot snapshot;
+        snapshot.spans = std::move(spans);
+        snapshot.width = client.right - client.left;
+        snapshot.height = client.bottom - client.top;
+        snapshot.trayLeft = trayLeft;
+        snapshot.measuredAt = GetTickCount64();
+        snapshot.valid = true;
+        {
+            std::lock_guard<std::mutex> lock(g_layoutLock);
+            g_layout = std::move(snapshot);
+        }
+    }
+    ReleaseUiaTaskbar();
+    if (g_uia) { g_uia->Release(); g_uia = NULL; }
+    CoUninitialize();
+    return 0;
+}
+
+static void StartScanThread() {
+    if (g_scanThread) return;
+    g_scanStop = false;
+    g_scanEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!g_scanEvent) return;
+    g_scanThread = CreateThread(NULL, 0, ScanThread, NULL, 0, NULL);
+    if (!g_scanThread) {
+        CloseHandle(g_scanEvent);
+        g_scanEvent = NULL;
+    }
+}
+
+// --- UI thread ---------------------------------------------------------------
 
 static int PreferredTaskbarX(int width, int trayLeft) {
     if (g_config.alignment == ALIGN_LEFT || g_config.alignment == ALIGN_CUSTOM)
@@ -220,14 +297,16 @@ static void PlaceWindow(HWND hWnd, int x, int y) {
 
 void SyncWithTaskbar(HWND hWnd) {
     if (!hWnd || !IsWindow(hWnd)) return;
-    // UI Automation can pump messages while calling Explorer.
     if (g_syncing) return;
     g_syncing = true;
     struct SyncGuard { ~SyncGuard() { g_syncing = false; } } guard;
     bool layoutChanged = g_syncPending.exchange(false);
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (taskbar != g_hTaskbar) {
-        g_layout = {};
+        {
+            std::lock_guard<std::mutex> lock(g_layoutLock);
+            g_layout = {};
+        }
         g_hTaskbar = taskbar;
         InitTaskbarHooks(hWnd);
     }
@@ -268,18 +347,23 @@ void SyncWithTaskbar(HWND hWnd) {
         g_monitorHeight = height;
         InvalidateRect(hWnd, NULL, FALSE);
     }
+    // The measurement itself happens on the worker thread, so this never blocks.
+    // Ask for a fresh scan when the shell reported a layout change; otherwise
+    // the worker refreshes the snapshot on its own.
+    if (layoutChanged) RequestScan();
+    TaskbarLayoutSnapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_layoutLock);
+        snapshot = g_layout;
+    }
+    ULONGLONG now = GetTickCount64();
+
     int trayLeft = width;
     std::vector<OccupiedSpan> occupied;
-    ULONGLONG now = GetTickCount64();
-    bool cached = !layoutChanged && g_layout.CanReuse(width, height, now) &&
-                  now - g_layout.measuredAt < 500;
-    bool knownLayout = !cached && height >= g_monitorHeight &&
-                       GetOccupiedSpans(0, g_monitorHeight, trayLeft, occupied);
-    if (knownLayout) {
-        g_layout = {occupied, width, height, trayLeft, now, true};
-    } else if (g_layout.CanReuse(width, height, now)) {
-        occupied = g_layout.spans;
-        trayLeft = g_layout.trayLeft;
+    bool knownLayout = false;
+    if (snapshot.CanReuse(width, height, now)) {
+        occupied = snapshot.spans;
+        trayLeft = snapshot.trayLeft;
         knownLayout = true;
     }
     int preferredX = PreferredTaskbarX(width, trayLeft);
@@ -297,7 +381,8 @@ void TickTaskbarPlacement(HWND hWnd) { SyncWithTaskbar(hWnd); }
 
 static bool IsTaskbarOrChild(HWND hwnd) {
     if (!hwnd || !g_hTaskbar) return false;
-    if (g_hMainWnd && (hwnd == g_hMainWnd || IsChild(g_hMainWnd, hwnd))) return false;
+    HWND mainWnd = g_hMainWnd.load();
+    if (mainWnd && (hwnd == mainWnd || IsChild(mainWnd, hwnd))) return false;
     return hwnd == g_hTaskbar || IsChild(g_hTaskbar, hwnd);
 }
 
@@ -322,18 +407,11 @@ static void CALLBACK CreateWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd,
 void InitTaskbarHooks(HWND hWnd) {
     g_hMainWnd = hWnd;
     g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
-    if (!g_comInitialized) {
-        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-        g_comInitialized = SUCCEEDED(hr);
-    }
-    if (!g_uia && g_comInitialized)
-        CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER,
-                         IID_IUIAutomation, reinterpret_cast<void**>(&g_uia));
+    StartScanThread();
     if (g_hTaskbar) {
         DWORD explorerPid = 0;
         GetWindowThreadProcessId(g_hTaskbar, &explorerPid);
         if (explorerPid && (explorerPid != g_hookPid || g_hTaskbar != g_hookTaskbar)) {
-            ReleaseUiaTaskbar();
             if (g_hHookLoc) UnhookWinEvent(g_hHookLoc);
             if (g_hHookShow) UnhookWinEvent(g_hHookShow);
             if (g_hHookHide) UnhookWinEvent(g_hHookHide);
@@ -348,21 +426,21 @@ void InitTaskbarHooks(HWND hWnd) {
             g_hHookHide = SetWinEventHook(EVENT_OBJECT_HIDE,
                 EVENT_OBJECT_HIDE, NULL, ShowHideWinEventProc,
                 explorerPid, 0, WINEVENT_OUTOFCONTEXT);
-            BindUiaTaskbar();
         }
     }
     if (!g_hHookCreate)
         g_hHookCreate = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_CREATE,
             NULL, CreateWinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+    RequestScan();
 }
 
 void CleanupTaskbarHooks() {
-    g_hMainWnd = NULL;
+    g_hMainWnd = nullptr;
     g_placementTimerMs = 0;
-    g_layout = {};
-    ReleaseUiaTaskbar();
-    if (g_uia) { g_uia->Release(); g_uia = NULL; }
-    if (g_comInitialized) { CoUninitialize(); g_comInitialized = false; }
+    {
+        std::lock_guard<std::mutex> lock(g_layoutLock);
+        g_layout = {};
+    }
     if (g_hHookLoc) { UnhookWinEvent(g_hHookLoc); g_hHookLoc = NULL; }
     if (g_hHookShow) { UnhookWinEvent(g_hHookShow); g_hHookShow = NULL; }
     if (g_hHookHide) { UnhookWinEvent(g_hHookHide); g_hHookHide = NULL; }
@@ -370,4 +448,18 @@ void CleanupTaskbarHooks() {
     g_hookPid = 0;
     g_hookTaskbar = NULL;
     g_syncPending = false;
+}
+
+void ShutdownTaskbarHooks() {
+    g_scanStop = true;
+    if (g_scanEvent) SetEvent(g_scanEvent);
+    if (g_scanThread) {
+        WaitForSingleObject(g_scanThread, 2000);
+        CloseHandle(g_scanThread);
+        g_scanThread = NULL;
+    }
+    if (g_scanEvent) {
+        CloseHandle(g_scanEvent);
+        g_scanEvent = NULL;
+    }
 }

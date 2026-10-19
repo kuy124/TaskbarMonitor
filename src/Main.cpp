@@ -270,5 +270,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    ShutdownTaskbarHooks();
     return (int)msg.wParam;
 }
