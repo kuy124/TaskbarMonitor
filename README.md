@@ -2,13 +2,15 @@
 
 <img src="assets/logo.svg" alt="TaskbarMonitor logo" width="72" height="72">
 
-Hardware monitor that runs directly inside the Windows taskbar. Written in C++17 using Win32 APIs and double-buffered GDI. Uses under 10 MB of RAM.
+Hardware monitor that runs inside the Windows taskbar. Written in C++17 using Win32 APIs and double-buffered GDI. Uses under 10 MB of RAM.
 
 The logo source is [assets/logo.svg](assets/logo.svg). The Windows icon and PNG are generated with `python tools/generate_icon.py` (requires Pillow and PyMuPDF for asset generation only).
 
 ## Metrics
 
-The monitor renders a two-row status block directly onto the taskbar.
+The monitor renders a two-row status block inside the taskbar.
+
+Network readings show transfer rates, not cumulative totals. Small transfers use B/s or bps so they do not round down to zero; larger rates use KB/s, MB/s, or the corresponding bit units. A full interval with no traffic still shows zero.
 
 | Metric | Display | Data Source |
 | :--- | :--- | :--- |
@@ -22,7 +24,7 @@ The monitor renders a two-row status block directly onto the taskbar.
 | Battery | Charge % and AC status | GetSystemPowerStatus (hides automatically on AC-only desktops) |
 | Uptime | System uptime | GetTickCount64 |
 
-If a system lacks an exposed thermal sensor, the monitor shows a load-based temperature estimate prefixed with `~`. This is an approximation, not a sensor reading. In System settings, optional local LibreHardwareMonitor support can read real CPU and GPU temperatures from its web server at `http://127.0.0.1:8085/data.json` when enabled in that tool. This does not start the server or require the tool for other metrics. LibreHardwareMonitor's server may listen on non-loopback interfaces; check its binding and firewall before enabling it.
+If a system lacks an exposed thermal sensor, the monitor estimates temperature based on system load. In System settings, optional local LibreHardwareMonitor support can read real CPU and GPU temperatures from its web server at `http://127.0.0.1:8085/data.json` when enabled in that tool. This does not start the server or require the tool for other metrics. LibreHardwareMonitor's server may listen on non-loopback interfaces; check its binding and firewall before enabling it.
 
 ## Settings
 
@@ -34,7 +36,11 @@ Toggle metrics on or off. Set the target drive letter for storage monitoring and
 
 ### Position
 - Alignment: Left, Right (tray adjacent), Center, or Custom.
-- Coordinates: Horizontal offset, vertical offset, item gap spacing.
+- Coordinates: The horizontal offset is measured from the taskbar edge. The vertical nudge shifts the readings up or down inside the taskbar band.
+- The monitor is a child of the taskbar. It sits in a gap clear of Search, app buttons, and the system tray, and never floats above the desktop. Brief layout-read failures reuse the last valid layout for up to two seconds.
+- The monitor fills the taskbar band, so it matches the taskbar height and DPI automatically. Each value sits directly after its label, and the reserved width keeps routine updates from resizing or shifting the layout.
+- When auto-hide collapses the taskbar, the monitor slides away with it.
+- Item gap spacing adjusts the space between readings.
 - Dividers: Toggle vertical lines between metric columns.
 
 ### Text
@@ -110,7 +116,7 @@ These are loaded dynamically via LoadLibraryW when present:
 - nvapi64.dll or nvapi.dll: NVIDIA API fallback
 - atiadlxx.dll or atiadlxy.dll: AMD Display Library (temperature)
 
-If none are present and the optional local sensor feed is unavailable, temperature falls back to a load-based estimate marked with `~`.
+If none are present and the optional local sensor feed is unavailable, temperature falls back to a load-based estimate.
 
 ## Configuration & Uninstallation
 

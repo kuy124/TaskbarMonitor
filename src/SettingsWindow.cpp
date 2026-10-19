@@ -532,7 +532,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
         CreateWindowExW(0, L"STATIC", L"Network units", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 268, 180, 20, hWnd, (HMENU)IDC_LBL_NETUNIT, NULL, NULL);
         HWND hComboNetU  = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST, 235, 264, 195, 100, hWnd, (HMENU)IDC_COMBO_NETUNIT, NULL, NULL);
-        CreateWindowExW(0, L"STATIC", L"Estimated temperatures show ~ when sensors are unavailable.", WS_CHILD | SS_LEFT | SS_NOPREFIX,
+        CreateWindowExW(0, L"STATIC", L"Temperatures fall back to a load-based estimate without a sensor.",
+            WS_CHILD | SS_LEFT | SS_NOPREFIX,
             0, 0, 0, 0, hWnd, (HMENU)IDC_LBL_METRIC_NOTE, NULL, NULL);
 
         // --- TAB 1: Position and Layout ---
@@ -542,14 +543,14 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"STATIC", L"Horizontal offset (px)", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 110, 180, 20, hWnd, (HMENU)IDC_LBL_OFFSETX, NULL, NULL);
         CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"12", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 235, 106, 95, 24, hWnd, (HMENU)IDC_EDIT_OFFSETX, NULL, NULL);
 
-        CreateWindowExW(0, L"STATIC", L"Vertical offset (px)", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 150, 180, 20, hWnd, (HMENU)IDC_LBL_OFFSETY, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"Vertical nudge (px)", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 150, 180, 20, hWnd, (HMENU)IDC_LBL_OFFSETY, NULL, NULL);
         CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 235, 146, 95, 24, hWnd, (HMENU)IDC_EDIT_OFFSETY, NULL, NULL);
 
         CreateWindowExW(0, L"STATIC", L"Reading gap (px)", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 190, 180, 20, hWnd, (HMENU)IDC_LBL_SPACING, NULL, NULL);
         CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10", WS_CHILD | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, 235, 186, 95, 24, hWnd, (HMENU)IDC_EDIT_SPACING, NULL, NULL);
 
         CreateWindowExW(0, L"BUTTON", L"Show dividers between readings", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 238, 420, 22, hWnd, (HMENU)IDC_CHK_DIVIDERS, NULL, NULL);
-        CreateWindowExW(0, L"STATIC", L"Offsets adjust the selected position; Custom uses screen coordinates.",
+        CreateWindowExW(0, L"STATIC", L"Sits inside the taskbar; moves to a clear gap when needed.",
             WS_CHILD | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, hWnd, (HMENU)IDC_LBL_LAYOUT_NOTE, NULL, NULL);
 
         // --- TAB 2: Typography ---

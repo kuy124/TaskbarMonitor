@@ -37,11 +37,12 @@
 #define DWMWA_EXCLUDED_FROM_PEEK 12
 #endif
 
-#define MONITOR_HEIGHT 36
 #define COLOR_TRANSPARENT_KEY RGB(1, 1, 1)
 
 #define TIMER_METRICS 1
+#define TIMER_PLACEMENT 2
 #define WM_TRAYICON (WM_USER + 1)
+#define WM_TASKBAR_SYNC (WM_APP + 1)
 
 // Menu Commands
 #define ID_TRAY_SETTINGS     200

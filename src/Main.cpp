@@ -11,8 +11,54 @@
 #include "Resource.h"
 
 HWND g_hWnd = NULL;
+static HWND g_hHostWnd = NULL;
+static bool g_initialized = false;
 UINT g_uTaskbarCreatedMsg = 0;
 NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
+
+static void CreateMonitorWindow(HINSTANCE hInstance);
+static void RecoverMonitorWindow() {
+    if (g_hWnd && IsWindow(g_hWnd)) return;
+    g_hWnd = NULL;
+    CleanupTaskbarHooks();
+    if (FindWindowW(L"Shell_TrayWnd", NULL))
+        CreateMonitorWindow((HINSTANCE)GetWindowLongPtrW(g_hHostWnd, GWLP_HINSTANCE));
+}
+
+static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == g_uTaskbarCreatedMsg) {
+        Shell_NotifyIconW(NIM_ADD, &g_nid);
+        RecoverMonitorWindow();
+        if (g_hWnd) {
+            InitTaskbarHooks(g_hWnd);
+            SyncWithTaskbar(g_hWnd);
+        }
+        return 0;
+    }
+    switch (msg) {
+    case WM_CREATE:
+        SetTimer(hWnd, 3, 200, NULL);
+        return 0;
+    case WM_TIMER:
+        if (wParam == 3) RecoverMonitorWindow();
+        return 0;
+    case WM_TRAYICON:
+        RecoverMonitorWindow();
+        if (g_hWnd) SendMessageW(g_hWnd, msg, wParam, lParam);
+        return 0;
+    case WM_DESTROY:
+        KillTimer(hWnd, 3);
+        if (g_hWnd && IsWindow(g_hWnd)) DestroyWindow(g_hWnd);
+        Shell_NotifyIconW(NIM_DELETE, &g_nid);
+        CleanupTaskbarHooks();
+        CleanupMetrics();
+        CloseSettingsWindow();
+        PostQuitMessage(0);
+        return 0;
+    default:
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
+    }
+}
 
 static void RefreshTrayTooltip() {
     if (!g_hWnd) return;
@@ -22,29 +68,28 @@ static void RefreshTrayTooltip() {
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (msg == g_uTaskbarCreatedMsg) {
-        Shell_NotifyIconW(NIM_ADD, &g_nid);
-        AttachToTaskbar(hWnd);
-        InitTaskbarHooks(hWnd);
-        SyncWithTaskbar(hWnd);
-        return 0;
-    }
-
     switch (msg) {
     case WM_CREATE: {
-        LoadConfig();
+        if (!g_initialized) LoadConfig();
         LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
         if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
         else exStyle &= ~WS_EX_TRANSPARENT;
         SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
         g_curWidth = CalculateTotalWidth();
         UpdateThemeColors();
-        InitMetrics();
+        if (!g_initialized) {
+            InitMetrics();
+            g_initialized = true;
+        }
         SetTimer(hWnd, TIMER_METRICS, g_config.refreshRateMs, NULL);
-        AttachToTaskbar(hWnd);
-        SyncWithTaskbar(hWnd);
         break;
     }
+
+    case WM_NCHITTEST:
+        // A child of the taskbar still swallows clicks over its own area.
+        // Returning HTTRANSPARENT lets them reach the taskbar underneath.
+        if (g_config.clickThrough) return HTTRANSPARENT;
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
 
     case WM_LBUTTONDBLCLK:
     case WM_LBUTTONDOWN:
@@ -85,7 +130,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle);
                 SaveConfig();
             } else if (cmd == ID_TRAY_EXIT) {
-                DestroyWindow(hWnd);
+                DestroyWindow(g_hHostWnd);
             }
         } else if (lParam == WM_LBUTTONDBLCLK) {
             OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
@@ -96,7 +141,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
         UpdateThemeColors();
+        SyncWithTaskbar(hWnd);
         InvalidateRect(hWnd, NULL, FALSE);
+        break;
+
+    case WM_DISPLAYCHANGE:
+    case WM_DPICHANGED:
+    case WM_TASKBAR_SYNC:
+        SyncWithTaskbar(hWnd);
         break;
 
     case WM_TIMER:
@@ -104,6 +156,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             UpdateAllMetrics();
             RefreshTrayTooltip();
             InvalidateRect(hWnd, NULL, FALSE);
+        } else if (wParam == TIMER_PLACEMENT) {
+            TickTaskbarPlacement(hWnd);
         }
         break;
 
@@ -116,18 +170,38 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_DESTROY:
-        Shell_NotifyIconW(NIM_DELETE, &g_nid);
         KillTimer(hWnd, TIMER_METRICS);
-        CleanupTaskbarHooks();
-        CleanupMetrics();
+        KillTimer(hWnd, TIMER_PLACEMENT);
         CloseSettingsWindow();
-        PostQuitMessage(0);
+        CleanupTaskbarHooks();
+        if (g_hWnd == hWnd) g_hWnd = NULL;
         break;
 
     default:
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
     return 0;
+}
+
+static void CreateMonitorWindow(HINSTANCE hInstance) {
+    if (g_hWnd && IsWindow(g_hWnd)) return;
+    g_hWnd = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"TaskbarMonitor", L"TaskbarMonitor", WS_POPUP,
+        0, 0, g_curWidth, g_monitorHeight, NULL, NULL, hInstance, NULL);
+    if (!g_hWnd) return;
+    SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
+    BOOL excludeFromPeek = TRUE;
+    DwmSetWindowAttribute(g_hWnd, DWMWA_EXCLUDED_FROM_PEEK,
+                          &excludeFromPeek, sizeof(excludeFromPeek));
+    InitTaskbarHooks(g_hWnd);
+    UpdateAllMetrics();
+    HDC initialDC = GetDC(g_hWnd);
+    if (initialDC) {
+        RenderOverlay(g_hWnd, initialDC);
+        ReleaseDC(g_hWnd, initialDC);
+    }
+    SyncWithTaskbar(g_hWnd);
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
@@ -152,32 +226,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
                                   GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     RegisterClassExW(&wc);
 
-    DWORD style = g_hTaskbar ? (WS_CHILD | WS_CLIPSIBLINGS) : WS_POPUP;
-    DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-    if (g_config.clickThrough) {
-        exStyle |= WS_EX_TRANSPARENT;
+    WNDCLASSEXW hostClass = { sizeof(WNDCLASSEXW) };
+    hostClass.lpfnWndProc = HostWndProc;
+    hostClass.hInstance = hInstance;
+    hostClass.lpszClassName = L"TaskbarMonitorHost";
+    RegisterClassExW(&hostClass);
+    g_hHostWnd = CreateWindowExW(WS_EX_TOOLWINDOW, hostClass.lpszClassName,
+                                  L"TaskbarMonitorHost", WS_POPUP,
+                                  0, 0, 0, 0, NULL, NULL, hInstance, NULL);
+    if (!g_hHostWnd) return 0;
+    CreateMonitorWindow(hInstance);
+    if (!g_hWnd) {
+        DestroyWindow(g_hHostWnd);
+        return 0;
     }
 
-    g_hWnd = CreateWindowExW(
-        exStyle,
-        wc.lpszClassName,
-        L"TaskbarMonitor",
-        style,
-        0, 0, g_curWidth, MONITOR_HEIGHT,
-        g_hTaskbar,
-        NULL, hInstance, NULL
-    );
-
-    if (!g_hWnd) return 0;
-
-    AttachToTaskbar(g_hWnd);
-    SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
-
-    BOOL excludeFromPeek = TRUE;
-    DwmSetWindowAttribute(g_hWnd, DWMWA_EXCLUDED_FROM_PEEK, &excludeFromPeek, sizeof(excludeFromPeek));
-
     // Tray Icon
-    g_nid.hWnd = g_hWnd;
+    g_nid.hWnd = g_hHostWnd;
     g_nid.uID = 1001;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
@@ -185,11 +250,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     wcscpy_s(g_nid.szTip, L"TaskbarMonitor");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
-    InitTaskbarHooks(g_hWnd);
-    UpdateAllMetrics();
     RefreshTrayTooltip();
-    SyncWithTaskbar(g_hWnd);
-    UpdateWindow(g_hWnd);
 
     bool openSettings = (pCmdLine && wcsstr(pCmdLine, L"--settings") != NULL);
     bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);

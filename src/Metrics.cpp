@@ -2,7 +2,7 @@
 #include "Config.h"
 #include "SensorFeed.h"
 #include "TemperatureEstimate.h"
-#include <unordered_map>
+#include "NetworkRate.h"
 #include <algorithm>
 #include <winhttp.h>
 
@@ -14,12 +14,7 @@ static PDH_HCOUNTER g_hGpuCounter = NULL;
 static PDH_HCOUNTER g_hDiskCounter = NULL;
 static PDH_HCOUNTER g_hCpuTempCounter = NULL;
 
-struct IfaceTraffic {
-    ULONG64 inBytes;
-    ULONG64 outBytes;
-};
-static std::unordered_map<ULONG64, IfaceTraffic> g_prevIfaces;
-static ULONGLONG g_prevTickCount = 0;
+static NetworkRate g_networkRate;
 static bool g_pdhReady = false;
 static ULONGLONG g_lastLocalPoll = 0;
 static SensorTemperatures g_localTemperatures;
@@ -452,18 +447,15 @@ void UpdateMemory() {
 }
 
 void UpdateNetwork() {
-    if (!g_config.showNet) return;
+    if (!g_config.showNet) {
+        g_networkRate.Reset();
+        return;
+    }
 
     PMIB_IF_TABLE2 pIfTable = NULL;
     if (GetIfTable2(&pIfTable) == NO_ERROR) {
         ULONGLONG now = GetTickCount64();
-        double elapsedSec = (g_prevTickCount != 0 && now > g_prevTickCount) 
-                            ? (double)(now - g_prevTickCount) / 1000.0 
-                            : 0.0;
-
-        ULONG64 deltaInTotal = 0;
-        ULONG64 deltaOutTotal = 0;
-        std::unordered_map<ULONG64, IfaceTraffic> currentIfaces;
+        NetworkRate::Snapshot currentIfaces;
 
         for (ULONG i = 0; i < pIfTable->NumEntries; i++) {
             MIB_IF_ROW2* row = &pIfTable->Table[i];
@@ -478,33 +470,16 @@ void UpdateNetwork() {
             ULONG64 luidKey = row->InterfaceLuid.Value;
             currentIfaces[luidKey] = { row->InOctets, row->OutOctets };
 
-            auto it = g_prevIfaces.find(luidKey);
-            if (it != g_prevIfaces.end() && elapsedSec > 0.0) {
-                if (row->InOctets >= it->second.inBytes) {
-                    deltaInTotal += (row->InOctets - it->second.inBytes);
-                }
-                if (row->OutOctets >= it->second.outBytes) {
-                    deltaOutTotal += (row->OutOctets - it->second.outBytes);
-                }
-            }
         }
         FreeMibTable(pIfTable);
 
-        if (elapsedSec > 0.0) {
-            g_metrics.downloadSpeed = (double)deltaInTotal / elapsedSec;
-            g_metrics.uploadSpeed = (double)deltaOutTotal / elapsedSec;
-        } else {
-            g_metrics.downloadSpeed = 0.0;
-            g_metrics.uploadSpeed = 0.0;
-        }
-
-        g_prevIfaces = std::move(currentIfaces);
-        g_prevTickCount = now;
+        g_networkRate.Sample(std::move(currentIfaces), now);
+        g_metrics.downloadSpeed = g_networkRate.download;
+        g_metrics.uploadSpeed = g_networkRate.upload;
     } else {
         g_metrics.downloadSpeed = -1.0;
         g_metrics.uploadSpeed = -1.0;
-        g_prevIfaces.clear();
-        g_prevTickCount = 0;
+        g_networkRate.Reset();
     }
 }
 
@@ -549,32 +524,5 @@ void UpdateAllMetrics() {
 }
 
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {
-    if (speedBytes < 0) {
-        swprintf(outBuf, size, L"N/A");
-        return;
-    }
-
-    if (g_config.netUnit == NET_UNIT_BITS) {
-        double bits = speedBytes * 8.0;
-        if (bits >= 1000000000.0) {
-            swprintf(outBuf, size, L"%.1f Gbps", bits / 1000000000.0);
-        } else if (bits >= 1000000.0) {
-            double mb = bits / 1000000.0;
-            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f Mbps", mb);
-            else             swprintf(outBuf, size, L"%.1f Mbps", mb);
-        } else {
-            swprintf(outBuf, size, L"%.0f Kbps", bits / 1000.0);
-        }
-    } else {
-        double kb = speedBytes / 1024.0;
-        if (kb >= 1048576.0) {
-            swprintf(outBuf, size, L"%.1f GB/s", kb / 1048576.0);
-        } else if (kb >= 1024.0) {
-            double mb = kb / 1024.0;
-            if (mb >= 100.0) swprintf(outBuf, size, L"%.0f MB/s", mb);
-            else             swprintf(outBuf, size, L"%.1f MB/s", mb);
-        } else {
-            swprintf(outBuf, size, L"%.0f KB/s", kb);
-        }
-    }
+    FormatNetworkSpeed(speedBytes, g_config.netUnit == NET_UNIT_BITS, outBuf, size);
 }

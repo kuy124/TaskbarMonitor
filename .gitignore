@@ -6,6 +6,8 @@
 
 # Build output directories
 build/
+build-check/
+build-verify/
 out/
 Debug/
 Release/

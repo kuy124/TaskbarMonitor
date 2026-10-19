@@ -85,6 +85,7 @@ struct AutostartInfo {
 
 extern MonitorConfig g_config;
 extern int g_curWidth;
+extern int g_monitorHeight;
 
 void SetDefaults();
 void LoadConfig();

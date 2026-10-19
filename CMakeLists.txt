@@ -13,12 +13,14 @@ set(SOURCES
     src/Theme.h
     src/Theme.cpp
     src/Metrics.h
+    src/NetworkRate.h
     src/TemperatureEstimate.h
     src/SensorFeed.h
     src/Metrics.cpp
     src/Renderer.h
     src/Renderer.cpp
     src/TaskbarSync.h
+    src/TaskbarPlacement.h
     src/TaskbarSync.cpp
     src/SettingsWindow.h
     src/SettingsWindow.cpp
@@ -50,6 +52,7 @@ target_link_libraries(TaskbarMonitor PRIVATE
     comdlg32
     ole32
     oleaut32
+    uiautomationcore
     wbemuuid
     winhttp
 )
@@ -61,6 +64,14 @@ endif()
 
 include(CTest)
 if (BUILD_TESTING)
+    add_executable(NetworkRateTest tests/NetworkRateTest.cpp)
+    target_include_directories(NetworkRateTest PRIVATE src)
+    if (MSVC)
+        target_compile_options(NetworkRateTest PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(NetworkRateTest PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME NetworkRateTest COMMAND NetworkRateTest)
     add_executable(SensorFeedTest tests/SensorFeedTest.cpp)
     target_include_directories(SensorFeedTest PRIVATE src)
     if (MSVC)
@@ -77,4 +88,12 @@ if (BUILD_TESTING)
         target_compile_options(TemperatureEstimateTest PRIVATE -UNDEBUG)
     endif()
     add_test(NAME TemperatureEstimateTest COMMAND TemperatureEstimateTest)
+    add_executable(TaskbarPlacementTest tests/TaskbarPlacementTest.cpp)
+    target_include_directories(TaskbarPlacementTest PRIVATE src)
+    if (MSVC)
+        target_compile_options(TaskbarPlacementTest PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(TaskbarPlacementTest PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME TaskbarPlacementTest COMMAND TaskbarPlacementTest)
 endif()

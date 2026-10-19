@@ -2,6 +2,7 @@
 
 MonitorConfig g_config;
 int g_curWidth = 430;
+int g_monitorHeight = 36;
 
 #define CONFIG_KEY CONFIG_REGISTRY_KEY
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
