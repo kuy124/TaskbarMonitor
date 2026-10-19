@@ -3,7 +3,6 @@
 #include "TaskbarPlacement.h"
 #include <uiautomation.h>
 #include <atomic>
-#include <mutex>
 #include <vector>
 
 HWND g_hTaskbar = NULL;
@@ -22,7 +21,7 @@ static bool g_syncing = false;
 // of milliseconds. On the UI thread that froze the settings window and every
 // other window this app owns, so the measurement runs on a worker thread and
 // publishes a snapshot that the UI thread only reads.
-static std::mutex g_layoutLock;
+static SRWLOCK g_layoutLock = SRWLOCK_INIT;
 static TaskbarLayoutSnapshot g_layout;
 static HANDLE g_scanThread = NULL;
 static HANDLE g_scanEvent = NULL;
@@ -233,8 +232,9 @@ static DWORD WINAPI ScanThread(LPVOID) {
         snapshot.measuredAt = GetTickCount64();
         snapshot.valid = true;
         {
-            std::lock_guard<std::mutex> lock(g_layoutLock);
+            AcquireSRWLockExclusive(&g_layoutLock);
             g_layout = std::move(snapshot);
+            ReleaseSRWLockExclusive(&g_layoutLock);
         }
     }
     ReleaseUiaTaskbar();
@@ -304,8 +304,9 @@ void SyncWithTaskbar(HWND hWnd) {
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (taskbar != g_hTaskbar) {
         {
-            std::lock_guard<std::mutex> lock(g_layoutLock);
+            AcquireSRWLockExclusive(&g_layoutLock);
             g_layout = {};
+            ReleaseSRWLockExclusive(&g_layoutLock);
         }
         g_hTaskbar = taskbar;
         InitTaskbarHooks(hWnd);
@@ -353,8 +354,9 @@ void SyncWithTaskbar(HWND hWnd) {
     if (layoutChanged) RequestScan();
     TaskbarLayoutSnapshot snapshot;
     {
-        std::lock_guard<std::mutex> lock(g_layoutLock);
+        AcquireSRWLockShared(&g_layoutLock);
         snapshot = g_layout;
+        ReleaseSRWLockShared(&g_layoutLock);
     }
     ULONGLONG now = GetTickCount64();
 
@@ -438,8 +440,9 @@ void CleanupTaskbarHooks() {
     g_hMainWnd = nullptr;
     g_placementTimerMs = 0;
     {
-        std::lock_guard<std::mutex> lock(g_layoutLock);
+        AcquireSRWLockExclusive(&g_layoutLock);
         g_layout = {};
+        ReleaseSRWLockExclusive(&g_layoutLock);
     }
     if (g_hHookLoc) { UnhookWinEvent(g_hHookLoc); g_hHookLoc = NULL; }
     if (g_hHookShow) { UnhookWinEvent(g_hHookShow); g_hHookShow = NULL; }
