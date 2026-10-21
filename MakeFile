@@ -1,7 +1,7 @@
 CXX = g++
 RC = windres
 CXXFLAGS = -O3 -mwindows -municode -Wall -Wextra -std=c++17 -Isrc
-LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32 -lcomdlg32 -lole32 -loleaut32 -lwbemuuid -lwinhttp
+LDFLAGS = -liphlpapi -lgdi32 -ldwmapi -lpdh -lpsapi -lshell32 -lcomctl32 -lcomdlg32 -lole32 -loleaut32 -luiautomationcore -luuid -lwbemuuid -lwinhttp
 
 SRCS = src/Config.cpp \
        src/Theme.cpp \

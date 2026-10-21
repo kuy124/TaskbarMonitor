@@ -8,3 +8,4 @@ void CleanupTaskbarHooks();
 void ShutdownTaskbarHooks();
 void SyncWithTaskbar(HWND hWnd);
 void TickTaskbarPlacement(HWND hWnd);
+bool IsAttachedToTaskbar(HWND hWnd, HWND taskbar);

@@ -17,6 +17,32 @@ static std::atomic<bool> g_syncPending{false};
 static UINT g_placementTimerMs = 0;
 static bool g_syncing = false;
 
+struct TaskbarChildSearch {
+    HWND target;
+    bool found;
+};
+
+static BOOL CALLBACK FindTaskbarChildProc(HWND hChild, LPARAM data) {
+    TaskbarChildSearch* search = reinterpret_cast<TaskbarChildSearch*>(data);
+    if (hChild == search->target) {
+        search->found = true;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// Explorer replaces its taskbar now and then, and the replacement can reuse
+// the handle of the window it replaces. A child window of another process
+// survives that replacement as an orphan of the dead taskbar, so a matching
+// parent handle proves nothing. Only the taskbar knows which children it
+// really has, so ask it.
+bool IsAttachedToTaskbar(HWND hWnd, HWND taskbar) {
+    if (!hWnd || !taskbar) return false;
+    TaskbarChildSearch search = { hWnd, false };
+    EnumChildWindows(taskbar, FindTaskbarChildProc, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
 // Measuring the taskbar needs UI Automation, which blocks for tens to hundreds
 // of milliseconds. On the UI thread that froze the settings window and every
 // other window this app owns, so the measurement runs on a worker thread and
@@ -265,33 +291,51 @@ static int PreferredTaskbarX(int width, int trayLeft) {
     return (width - g_curWidth) / 2 + g_config.offsetX;
 }
 
-static void EnsureTaskbarChild(HWND hWnd) {
-    if (!g_hTaskbar || !IsWindow(g_hTaskbar)) return;
-    if (GetParent(hWnd) != g_hTaskbar) {
-        SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        LONG_PTR style = GetWindowLongPtrW(hWnd, GWL_STYLE);
-        SetWindowLongPtrW(hWnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_CLIPSIBLINGS);
-        SetParent(hWnd, g_hTaskbar);
-        SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    }
+// The monitor is a child of the taskbar, which belongs to another process.
+// A window that already belongs to another process cannot be moved to a
+// different parent, so only a window that is still a popup can join the
+// taskbar. One that was orphaned by a taskbar that has been replaced has to
+// be replaced by a fresh window instead.
+static bool EnsureTaskbarChild(HWND hWnd, HWND taskbar) {
+    if (!taskbar || !IsWindow(taskbar)) return false;
+    if (IsAttachedToTaskbar(hWnd, taskbar)) return true;
+    LONG_PTR style = GetWindowLongPtrW(hWnd, GWL_STYLE);
+    if (style & WS_CHILD) return false;
+    // The parent is set before the style, because a window that carries the
+    // child style without a parent belongs to the desktop, and the desktop
+    // refuses to hand the window over afterwards.
+    SetParent(hWnd, taskbar);
+    if (!IsAttachedToTaskbar(hWnd, taskbar)) return false;
+    SetWindowLongPtrW(hWnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_CLIPSIBLINGS);
+    // A window that had to be drawn over the taskbar is a topmost window, and
+    // a child of the taskbar must not be.
+    LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle & ~WS_EX_TOPMOST);
+    SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
 }
 
-static void PlaceWindow(HWND hWnd, int x, int y) {
+static void PlaceWindow(HWND hWnd, int x, int y, bool attached) {
     POINT screen = {x, y};
     ClientToScreen(g_hTaskbar, &screen);
     RECT current = {};
     GetWindowRect(hWnd, &current);
-    if (IsWindowVisible(hWnd) && current.left == screen.x && current.top == screen.y &&
+    // A child of the taskbar rides along with it. A window that the shell
+    // would not take as a child is drawn over the taskbar band instead, on
+    // top of it.
+    int px = attached ? x : screen.x;
+    int py = attached ? y : screen.y;
+    HWND after = attached ? HWND_TOP : HWND_TOPMOST;
+    if (IsWindowVisible(hWnd) && current.left == px && current.top == py &&
         current.right - current.left == g_curWidth &&
         current.bottom - current.top == g_monitorHeight) {
         if (GetWindow(hWnd, GW_HWNDPREV))
-            SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0,
+            SetWindowPos(hWnd, after, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         return;
     }
-    SetWindowPos(hWnd, HWND_TOP, x, y, g_curWidth, g_monitorHeight,
+    SetWindowPos(hWnd, after, px, py, g_curWidth, g_monitorHeight,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
@@ -318,7 +362,15 @@ void SyncWithTaskbar(HWND hWnd) {
     }
     // Parent to the taskbar as soon as it exists. A child rides the taskbar
     // as it slides, so it needs no separate show and hide.
-    EnsureTaskbarChild(hWnd);
+    bool attached = EnsureTaskbarChild(hWnd, taskbar);
+    if (!attached && (GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_CHILD)) {
+        // The window was orphaned by a taskbar that has been replaced. It is
+        // not drawn any more and cannot be moved to the new taskbar, so it
+        // stays hidden until a fresh one is built for it.
+        ShowWindow(hWnd, SW_HIDE);
+        SetPlacementTimer(hWnd, 100);
+        return;
+    }
     RECT taskbarRect = {}, client = {};
     HMONITOR taskbarMonitor = MonitorFromWindow(g_hTaskbar, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor = {sizeof(monitor)};
@@ -375,7 +427,7 @@ void SyncWithTaskbar(HWND hWnd) {
     // Prefer a clear gap. When the taskbar is crowded, keep the preferred spot
     // inside the taskbar instead of floating over the desktop.
     int targetX = freeX ? *freeX : std::clamp(preferredX, 0, std::max(0, width - g_curWidth));
-    PlaceWindow(hWnd, targetX, 0);
+    PlaceWindow(hWnd, targetX, 0, attached);
     SetPlacementTimer(hWnd, 100);
 }
 
@@ -408,9 +460,11 @@ static void CALLBACK CreateWinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd,
 
 void InitTaskbarHooks(HWND hWnd) {
     g_hMainWnd = hWnd;
-    g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+    // The taskbar is not looked up again here: the shell replaces it while
+    // it starts up, and a second lookup can land on a taskbar that is
+    // already gone. The caller passes the one it is working with.
     StartScanThread();
-    if (g_hTaskbar) {
+    if (g_hTaskbar && IsWindow(g_hTaskbar)) {
         DWORD explorerPid = 0;
         GetWindowThreadProcessId(g_hTaskbar, &explorerPid);
         if (explorerPid && (explorerPid != g_hookPid || g_hTaskbar != g_hookTaskbar)) {

@@ -18,11 +18,26 @@ NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
 
 static void CreateMonitorWindow(HINSTANCE hInstance);
 static void RecoverMonitorWindow() {
-    if (g_hWnd && IsWindow(g_hWnd)) return;
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (!taskbar) return;
+    if (g_hWnd && IsWindow(g_hWnd)) {
+        if (IsAttachedToTaskbar(g_hWnd, taskbar)) return;
+        // A window that is still a popup can join the taskbar, and the sync
+        // does that. Only a window that was orphaned by a taskbar that has
+        // been replaced has to be replaced: a child of another process
+        // cannot be moved to a different parent.
+        if (!(GetWindowLongPtrW(g_hWnd, GWL_STYLE) & WS_CHILD)) return;
+    }
+    // Explorer replaces its taskbar now and then, and the replacement can
+    // reuse the handle of the window it replaces. The monitor window is a
+    // child of another process, so it survives that replacement as an orphan
+    // of the dead taskbar: the handle still matches, but nothing is drawn.
+    // Only the taskbar knows which children it really has, so ask it and
+    // build a fresh window for the taskbar that is there now.
+    if (g_hWnd && IsWindow(g_hWnd)) DestroyWindow(g_hWnd);
     g_hWnd = NULL;
     CleanupTaskbarHooks();
-    if (FindWindowW(L"Shell_TrayWnd", NULL))
-        CreateMonitorWindow((HINSTANCE)GetWindowLongPtrW(g_hHostWnd, GWLP_HINSTANCE));
+    CreateMonitorWindow((HINSTANCE)GetWindowLongPtrW(g_hHostWnd, GWLP_HINSTANCE));
 }
 
 static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -30,6 +45,7 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         Shell_NotifyIconW(NIM_ADD, &g_nid);
         RecoverMonitorWindow();
         if (g_hWnd) {
+            g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
             InitTaskbarHooks(g_hWnd);
             SyncWithTaskbar(g_hWnd);
         }
@@ -185,11 +201,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 static void CreateMonitorWindow(HINSTANCE hInstance) {
     if (g_hWnd && IsWindow(g_hWnd)) return;
+    // The window is a plain popup on purpose. A window that is created with
+    // a window of another process as its parent keeps that window as its
+    // owner, and the shell then refuses to take it as a child.
     g_hWnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         L"TaskbarMonitor", L"TaskbarMonitor", WS_POPUP,
         0, 0, g_curWidth, g_monitorHeight, NULL, NULL, hInstance, NULL);
     if (!g_hWnd) return;
+    g_hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     SetLayeredWindowAttributes(g_hWnd, g_transparentKey, 0, LWA_COLORKEY);
     BOOL excludeFromPeek = TRUE;
     DwmSetWindowAttribute(g_hWnd, DWMWA_EXCLUDED_FROM_PEEK,
