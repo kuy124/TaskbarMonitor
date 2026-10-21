@@ -43,7 +43,7 @@ void SetLicenseAccepted(bool accepted) {
 }
 
 static const wchar_t* kLicenseText =
-    L"TaskbarMonitor \x2014 Release Edition 1.2.0\r\n"
+    L"TaskbarMonitor \x2014 Release Edition 1.2.1\r\n"
     L"=================================================\r\n"
     L"\r\n"
     L"By running, installing, or using TaskbarMonitor you agree to the terms of\r\n"
@@ -167,7 +167,7 @@ static LRESULT CALLBACK LicenseWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         subRc.left = rc.right - 200;
         SetTextColor(hdc, cLicTextSecondary);
         SelectObject(hdc, hLicBodyFont);
-        DrawTextW(hdc, L"Release Edition 1.2.0", -1, &subRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(hdc, L"Release Edition 1.2.1", -1, &subRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         EndPaint(hWnd, &ps);
         return 0;

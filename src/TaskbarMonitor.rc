@@ -5,8 +5,8 @@
 IDI_TASKBARMONITOR ICON "TaskbarMonitor.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,2,0,0
-PRODUCTVERSION  1,2,0,0
+FILEVERSION     1,2,1,0
+PRODUCTVERSION  1,2,1,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -19,12 +19,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "TaskbarMonitor Open Source Project"
             VALUE "FileDescription",  "TaskbarMonitor"
-            VALUE "FileVersion",      "1.2.0.0"
+            VALUE "FileVersion",      "1.2.1.0"
             VALUE "InternalName",     "TaskbarMonitor"
             VALUE "LegalCopyright",   "Copyright (C) 2026 TaskbarMonitor Project"
             VALUE "OriginalFilename", "TaskbarMonitor.exe"
             VALUE "ProductName",      "TaskbarMonitor"
-            VALUE "ProductVersion",   "1.2.0.0"
+            VALUE "ProductVersion",   "1.2.1.0"
         END
     END
     BLOCK "VarFileInfo"
