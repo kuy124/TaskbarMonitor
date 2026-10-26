@@ -1,4 +1,4 @@
-param([int]$Samples = 30, [string]$Screenshot = '')
+param([int]$Samples = 30, [string]$Screenshot = '', [switch]$StartSearch)
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System;
@@ -12,6 +12,8 @@ public class TaskbarProbe {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
     public static IntPtr Monitor() {
         IntPtr found = FindWindow("TaskbarMonitor", null);
         if (found != IntPtr.Zero) return found;
@@ -31,7 +33,7 @@ for ($i=0; $i -lt $Samples; $i++) {
     [void][TaskbarProbe]::GetWindowRect($handle, [ref]$rect)
     $observations += [pscustomobject]@{
         Visible = [TaskbarProbe]::IsWindowVisible($handle)
-        Attached = ([TaskbarProbe]::GetParent($handle) -eq [TaskbarProbe]::FindWindow('Shell_TrayWnd', $null))
+        Attached = [TaskbarProbe]::IsChild([TaskbarProbe]::FindWindow('Shell_TrayWnd', $null), $handle)
         X = $rect.Left; Y = $rect.Top; Width = $rect.Right-$rect.Left
     }
     Start-Sleep -Milliseconds 200
@@ -53,4 +55,32 @@ if ($Screenshot) {
 }
 if ($observations.Where({-not $_.Visible -or -not $_.Attached}).Count) {
     throw 'Monitor was hidden or detached during the sample. Check whether the taskbar had space and was open.'
+}
+if ($StartSearch) {
+    # Keep the original HWND: enumeration cannot find it while the panels are open.
+    $handle = [TaskbarProbe]::Monitor()
+    foreach ($panel in @('Start', 'Search')) {
+        try {
+            [TaskbarProbe]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero)
+            if ($panel -eq 'Search') {
+                [TaskbarProbe]::keybd_event(0x53, 0, 0, [UIntPtr]::Zero)
+                [TaskbarProbe]::keybd_event(0x53, 0, 2, [UIntPtr]::Zero)
+            }
+            [TaskbarProbe]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 800
+            for ($i=0; $i -lt $Samples; $i++) {
+                $taskbar = [TaskbarProbe]::FindWindow('Shell_TrayWnd', $null)
+                if (-not [TaskbarProbe]::IsWindowVisible($handle) -or
+                    -not [TaskbarProbe]::IsChild($taskbar, $handle)) {
+                    throw "Monitor was hidden, detached, or replaced while $panel was open."
+                }
+                Start-Sleep -Milliseconds 200
+            }
+        } finally {
+            [TaskbarProbe]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+            [TaskbarProbe]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    'Start and Search visibility checks passed.'
 }

@@ -17,30 +17,11 @@ static std::atomic<bool> g_syncPending{false};
 static UINT g_placementTimerMs = 0;
 static bool g_syncing = false;
 
-struct TaskbarChildSearch {
-    HWND target;
-    bool found;
-};
-
-static BOOL CALLBACK FindTaskbarChildProc(HWND hChild, LPARAM data) {
-    TaskbarChildSearch* search = reinterpret_cast<TaskbarChildSearch*>(data);
-    if (hChild == search->target) {
-        search->found = true;
-        return FALSE;
-    }
-    return TRUE;
-}
-
-// Explorer replaces its taskbar now and then, and the replacement can reuse
-// the handle of the window it replaces. A child window of another process
-// survives that replacement as an orphan of the dead taskbar, so a matching
-// parent handle proves nothing. Only the taskbar knows which children it
-// really has, so ask it.
+// Start/Search hides taskbar children from enumeration in its shell-only
+// Z-order band. Check the actual ancestry, not enumeration or a parent HWND
+// that Explorer could have reused after replacing the taskbar.
 bool IsAttachedToTaskbar(HWND hWnd, HWND taskbar) {
-    if (!hWnd || !taskbar) return false;
-    TaskbarChildSearch search = { hWnd, false };
-    EnumChildWindows(taskbar, FindTaskbarChildProc, reinterpret_cast<LPARAM>(&search));
-    return search.found;
+    return hWnd && taskbar && IsChild(taskbar, hWnd);
 }
 
 // Measuring the taskbar needs UI Automation, which blocks for tens to hundreds
@@ -304,8 +285,8 @@ static bool EnsureTaskbarChild(HWND hWnd, HWND taskbar) {
     // The parent is set before the style, because a window that carries the
     // child style without a parent belongs to the desktop, and the desktop
     // refuses to hand the window over afterwards.
-    SetParent(hWnd, taskbar);
-    if (!IsAttachedToTaskbar(hWnd, taskbar)) return false;
+    SetLastError(ERROR_SUCCESS);
+    if (!SetParent(hWnd, taskbar) && GetLastError() != ERROR_SUCCESS) return false;
     SetWindowLongPtrW(hWnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_CLIPSIBLINGS);
     // A window that had to be drawn over the taskbar is a topmost window, and
     // a child of the taskbar must not be.
