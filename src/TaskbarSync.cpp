@@ -1,6 +1,7 @@
 #include "TaskbarSync.h"
 #include "Config.h"
 #include "TaskbarPlacement.h"
+#include "Theme.h"
 #include <uiautomation.h>
 #include <atomic>
 #include <vector>
@@ -325,6 +326,7 @@ void SyncWithTaskbar(HWND hWnd) {
     if (g_syncing) return;
     g_syncing = true;
     struct SyncGuard { ~SyncGuard() { g_syncing = false; } } guard;
+    SetPlacementTimer(hWnd, 100);
     bool layoutChanged = g_syncPending.exchange(false);
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (taskbar != g_hTaskbar) {
@@ -338,19 +340,25 @@ void SyncWithTaskbar(HWND hWnd) {
     }
     if (!g_hTaskbar || !IsWindowVisible(g_hTaskbar)) {
         ShowWindow(hWnd, SW_HIDE);
-        SetPlacementTimer(hWnd, 100);
         return;
     }
     // Parent to the taskbar as soon as it exists. A child rides the taskbar
     // as it slides, so it needs no separate show and hide.
+    bool wasAttached = IsAttachedToTaskbar(hWnd, taskbar);
     bool attached = EnsureTaskbarChild(hWnd, taskbar);
     if (!attached && (GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_CHILD)) {
         // The window was orphaned by a taskbar that has been replaced. It is
         // not drawn any more and cannot be moved to the new taskbar, so it
         // stays hidden until a fresh one is built for it.
         ShowWindow(hWnd, SW_HIDE);
-        SetPlacementTimer(hWnd, 100);
         return;
+    }
+    // Initialize the layered surface after parenting, and retry failed startup
+    // setup. A layered window can be WS_VISIBLE without drawing anything.
+    if ((attached && !wasAttached) ||
+        !GetLayeredWindowAttributes(hWnd, NULL, NULL, NULL)) {
+        if (!SetLayeredWindowAttributes(hWnd, g_transparentKey, 0, LWA_COLORKEY)) return;
+        InvalidateRect(hWnd, NULL, FALSE);
     }
     RECT taskbarRect = {}, client = {};
     HMONITOR taskbarMonitor = MonitorFromWindow(g_hTaskbar, MONITOR_DEFAULTTONEAREST);
@@ -359,7 +367,6 @@ void SyncWithTaskbar(HWND hWnd) {
         !GetClientRect(g_hTaskbar, &client) ||
         !GetMonitorInfoW(taskbarMonitor, &monitor)) {
         ShowWindow(hWnd, SW_HIDE);
-        SetPlacementTimer(hWnd, 100);
         return;
     }
     TaskbarEdge edge = DetectTaskbarEdge(Bounds(taskbarRect), Bounds(monitor.rcMonitor));
@@ -369,7 +376,6 @@ void SyncWithTaskbar(HWND hWnd) {
     if (!horizontal) {
         // A side taskbar is a narrow strip; the readings cannot live in it.
         ShowWindow(hWnd, SW_HIDE);
-        SetPlacementTimer(hWnd, 100);
         return;
     }
     // A real child window is covered by whatever covers the taskbar, so no
@@ -409,7 +415,6 @@ void SyncWithTaskbar(HWND hWnd) {
     // inside the taskbar instead of floating over the desktop.
     int targetX = freeX ? *freeX : std::clamp(preferredX, 0, std::max(0, width - g_curWidth));
     PlaceWindow(hWnd, targetX, 0, attached);
-    SetPlacementTimer(hWnd, 100);
 }
 
 void TickTaskbarPlacement(HWND hWnd) { SyncWithTaskbar(hWnd); }
