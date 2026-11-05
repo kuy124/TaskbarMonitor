@@ -9,6 +9,7 @@
 #include "StartupDialog.h"
 #include "License.h"
 #include "Resource.h"
+#include "Updater.h"
 
 HWND g_hWnd = NULL;
 static HWND g_hHostWnd = NULL;
@@ -57,6 +58,7 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
     case WM_TIMER:
         if (wParam == 3) RecoverMonitorWindow();
+        if (wParam == 4) CheckForUpdates();
         return 0;
     case WM_TRAYICON:
         RecoverMonitorWindow();
@@ -278,6 +280,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
     RefreshTrayTooltip();
+
+    CheckForUpdates();
+    SetTimer(g_hHostWnd, 4, 24 * 60 * 60 * 1000, NULL);
 
     bool openSettings = (pCmdLine && wcsstr(pCmdLine, L"--settings") != NULL);
     bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);

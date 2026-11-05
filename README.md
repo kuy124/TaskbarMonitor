@@ -6,6 +6,18 @@ Hardware monitor that runs inside the Windows taskbar. Written in C++17 using Wi
 
 The logo source is [assets/logo.svg](assets/logo.svg). The Windows icon and PNG are generated with `python tools/generate_icon.py` (requires Pillow and PyMuPDF for asset generation only).
 
+## Automatic updates
+
+TaskbarMonitor checks the public GitHub releases API on startup and every 24 hours.
+No GitHub token is needed. When a newer stable version is available, you can choose
+whether to download, install, and restart. Disable automatic checks in
+**Settings → Advanced → Check for updates automatically**, then click **Apply**.
+
+Updates require a writable application folder. Downloads are checked against
+GitHub's SHA-256 release digest and the executable version before replacement.
+Failed checks leave the monitor running; failed replacements preserve the old
+executable. Releases without a checksum are not installed automatically.
+
 ## Screenshots
 
 ### Taskbar monitor

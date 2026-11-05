@@ -170,6 +170,7 @@ void SetDefaults() {
     g_config.clickThrough    = false;
     g_config.runAtStartup    = false;
     g_config.useLocalSensors = false;
+    g_config.autoUpdate      = true;
 
     g_config.themeMode       = THEME_AUTO;
     g_config.transparentBg   = true;
@@ -229,6 +230,7 @@ void LoadConfig() {
         ReadDword(L"NetUnit", g_config.netUnit);
         ReadBool(L"ClickThrough", g_config.clickThrough);
         ReadBool(L"UseLocalSensors", g_config.useLocalSensors);
+        ReadBool(L"AutoUpdate", g_config.autoUpdate);
 
         ReadDword(L"ThemeMode", g_config.themeMode);
         ReadBool(L"TransparentBg", g_config.transparentBg);
@@ -297,6 +299,7 @@ void SaveConfig() {
         WriteDword(L"NetUnit", (DWORD)g_config.netUnit);
         WriteBool(L"ClickThrough", g_config.clickThrough);
         WriteBool(L"UseLocalSensors", g_config.useLocalSensors);
+        WriteBool(L"AutoUpdate", g_config.autoUpdate);
 
         WriteDword(L"ThemeMode", (DWORD)g_config.themeMode);
         WriteBool(L"TransparentBg", g_config.transparentBg);

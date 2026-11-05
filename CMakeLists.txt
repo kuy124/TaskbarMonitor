@@ -29,12 +29,13 @@ set(SOURCES
     src/License.h
     src/License.cpp
     src/Main.cpp
+    src/Updater.cpp
     src/Resource.h
     src/TaskbarMonitor.rc
 )
 
 set_source_files_properties(src/TaskbarMonitor.rc PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TaskbarMonitor.ico"
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TaskbarMonitor.ico;${CMAKE_CURRENT_SOURCE_DIR}/src/Updater.ps1"
 )
 
 add_executable(TaskbarMonitor WIN32 ${SOURCES})
@@ -63,6 +64,9 @@ if (MINGW)
 endif()
 
 include(CTest)
+if(BUILD_TESTING AND WIN32)
+    add_test(NAME UpdaterTests COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/src/Updater.ps1" -SelfTest)
+endif()
 if (BUILD_TESTING)
     add_executable(NetworkRateTest tests/NetworkRateTest.cpp)
     target_include_directories(NetworkRateTest PRIVATE src)

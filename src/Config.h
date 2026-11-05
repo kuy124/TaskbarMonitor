@@ -55,6 +55,7 @@ struct MonitorConfig {
     bool clickThrough;    // Mouse clicks pass through
     bool runAtStartup;
     bool useLocalSensors;
+    bool autoUpdate;
 
     // Theme & Colors
     int themeMode;        // ThemeMode

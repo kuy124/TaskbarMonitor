@@ -11,7 +11,8 @@ SRCS = src/Config.cpp \
        src/SettingsWindow.cpp \
        src/StartupDialog.cpp \
        src/License.cpp \
-       src/Main.cpp
+       src/Main.cpp \
+       src/Updater.cpp
 
 OBJS = $(SRCS:.cpp=.o) src/TaskbarMonitor.res.o
 TARGET = TaskbarMonitor.exe
@@ -21,7 +22,7 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $@ $(CXXFLAGS) $(LDFLAGS)
 
-src/TaskbarMonitor.res.o: src/TaskbarMonitor.rc src/TaskbarMonitor.manifest src/TaskbarMonitor.ico src/Resource.h
+src/TaskbarMonitor.res.o: src/TaskbarMonitor.rc src/TaskbarMonitor.manifest src/TaskbarMonitor.ico src/Resource.h src/Updater.ps1
 	$(RC) -i src/TaskbarMonitor.rc -o $@
 
 %.o: %.cpp

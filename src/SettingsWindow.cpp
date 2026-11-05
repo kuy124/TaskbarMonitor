@@ -151,6 +151,7 @@ static void LayoutSettingsControls(HWND hWnd) {
         { IDC_CHK_AUTOSTART, 216, 237, 490, 26 }, { IDC_LBL_AUTOSTART_STATUS, 216, 269, 500, 23 },
         { IDC_CHK_CLICKTHROUGH, 216, 330, 490, 26 },
         { IDC_CHK_LOCAL_SENSORS, 216, 383, 490, 26 }, { IDC_LBL_SENSOR_NOTE, 216, 414, 500, 23 },
+        { IDC_CHK_AUTOUPDATE, 216, 451, 490, 26 },
 
         { IDC_BTN_DEFAULTS, 214, 510, 157, 35 }, { IDC_BTN_APPLY, 450, 510, 78, 35 },
         { IDC_BTN_CANCEL, 536, 510, 78, 35 }, { IDC_BTN_SAVE, 622, 510, 118, 35 },
@@ -323,7 +324,7 @@ static void ShowTabControls(HWND hWnd, int tabIndex) {
     const int tab4Controls[] = { 
         IDC_LBL_RATE, IDC_EDIT_RATE, IDC_CHK_AUTOSTART, IDC_CHK_CLICKTHROUGH,
          IDC_LBL_AUTOSTART_STATUS, IDC_LBL_SETTINGSTHEME, IDC_COMBO_SETTINGSTHEME,
-         IDC_CHK_LOCAL_SENSORS, IDC_LBL_SENSOR_NOTE, 0
+         IDC_CHK_LOCAL_SENSORS, IDC_LBL_SENSOR_NOTE, IDC_CHK_AUTOUPDATE, 0
     };
 
     auto SetControlsVisible = [&](const int* ids, bool visible) {
@@ -413,6 +414,7 @@ static void ApplyCurrentSettings(HWND hWnd) {
     g_config.autoContrast    = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOCONTRAST) == BST_CHECKED);
     g_config.clickThrough    = (IsDlgButtonChecked(hWnd, IDC_CHK_CLICKTHROUGH) == BST_CHECKED);
     g_config.useLocalSensors = (IsDlgButtonChecked(hWnd, IDC_CHK_LOCAL_SENSORS) == BST_CHECKED);
+    g_config.autoUpdate = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOUPDATE) == BST_CHECKED);
 
     HWND hComboDrive = GetDlgItem(hWnd, IDC_COMBO_DRIVE);
     int driveSel = (int)SendMessageW(hComboDrive, CB_GETCURSEL, 0, 0);
@@ -582,6 +584,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"BUTTON", L"Background", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 250, 246, 200, 32, hWnd, (HMENU)IDC_BTN_COL_BG, NULL, NULL);
 
         // --- TAB 4: Advanced ---
+        CreateWindowExW(0, L"BUTTON", L"Check for updates automatically", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 0, 0, hWnd, (HMENU)IDC_CHK_AUTOUPDATE, NULL, NULL);
         CreateWindowExW(0, L"STATIC", L"Refresh interval (ms)", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 75, 180, 20, hWnd, (HMENU)IDC_LBL_RATE, NULL, NULL);
         CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1000", WS_CHILD | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, 235, 71, 105, 24, hWnd, (HMENU)IDC_EDIT_RATE, NULL, NULL);
 
@@ -620,6 +623,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CheckDlgButton(hWnd, IDC_CHK_AUTOSTART, g_config.runAtStartup ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_CLICKTHROUGH, g_config.clickThrough ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_LOCAL_SENSORS, g_config.useLocalSensors ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_AUTOUPDATE, g_config.autoUpdate ? BST_CHECKED : BST_UNCHECKED);
         s_autostartCheckboxDirty = false;
 
         wchar_t driveStrings[512];
