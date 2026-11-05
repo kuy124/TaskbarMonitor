@@ -225,6 +225,13 @@ static void CreateMonitorWindow(HINSTANCE hInstance) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
+    HANDLE instanceMutex = CreateMutexW(NULL, FALSE, L"Local\\TaskbarMonitor.SingleInstance");
+    if (!instanceMutex) return 1;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(instanceMutex);
+        return 0;
+    }
+
     INITCOMMONCONTROLSEX icex = { sizeof(INITCOMMONCONTROLSEX), ICC_STANDARD_CLASSES | ICC_TAB_CLASSES };
     InitCommonControlsEx(&icex);
 
@@ -291,5 +298,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
         DispatchMessageW(&msg);
     }
     ShutdownTaskbarHooks();
+    CloseHandle(instanceMutex);
     return (int)msg.wParam;
 }

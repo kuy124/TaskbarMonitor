@@ -6,6 +6,16 @@ Hardware monitor that runs inside the Windows taskbar. Written in C++17 using Wi
 
 The logo source is [assets/logo.svg](assets/logo.svg). The Windows icon and PNG are generated with `python tools/generate_icon.py` (requires Pillow and PyMuPDF for asset generation only).
 
+## Screenshots
+
+### Taskbar monitor
+
+![Taskbar monitor showing live network, CPU, GPU, memory, disk, battery, and uptime metrics](screenshots/taskbar.png)
+
+### Settings
+
+![Settings window with controls for visible metrics, appearance, and refresh intervals](screenshots/settings.png)
+
 ## Metrics
 
 The monitor renders a two-row status block inside the taskbar.

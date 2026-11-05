@@ -105,4 +105,7 @@ if (BUILD_TESTING)
         target_compile_options(TaskbarStartupTest PRIVATE -UNDEBUG)
     endif()
     add_test(NAME TaskbarStartupTest COMMAND TaskbarStartupTest)
+    add_test(NAME SingleInstanceTest COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/SingleInstanceTest.ps1"
+        -Executable "$<TARGET_FILE:TaskbarMonitor>")
 endif()
