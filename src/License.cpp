@@ -1,6 +1,7 @@
 #include "License.h"
 #include "Resource.h"
 #include "Config.h"
+#include <string>
 
 // Button IDs
 #define IDC_LIC_TEXT     1501
@@ -43,7 +44,7 @@ void SetLicenseAccepted(bool accepted) {
 }
 
 static const wchar_t* kLicenseText =
-    L"TaskbarMonitor \x2014 Release Edition 1.2.1\r\n"
+    L"TaskbarMonitor \x2014 Release Edition 1.2.6\r\n"
     L"=================================================\r\n"
     L"\r\n"
     L"By running, installing, or using TaskbarMonitor you agree to the terms of\r\n"
@@ -112,7 +113,21 @@ static LRESULT CALLBACK LicenseWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         int clientW = rc.right - rc.left;
         int clientH = rc.bottom - rc.top;
 
-        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", kLicenseText,
+        std::wstring displayedLicense(kLicenseText);
+        HMODULE module = GetModuleHandleW(NULL);
+        HRSRC notices = FindResourceW(module, MAKEINTRESOURCEW(2510), RT_RCDATA);
+        if (notices) {
+            const char* bytes = static_cast<const char*>(LockResource(LoadResource(module, notices)));
+            int length = static_cast<int>(SizeofResource(module, notices));
+            int count = bytes ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes, length, NULL, 0) : 0;
+            if (count > 0) {
+                std::wstring text(count, L'\0');
+                MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes, length, text.data(), count);
+                displayedLicense += L"\r\n\r\nBUNDLED COMPONENTS AND SOURCE AVAILABILITY\r\n";
+                displayedLicense += text;
+            }
+        }
+        CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", displayedLicense.c_str(),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
             24, 56, clientW - 48, clientH - 132,
             hWnd, (HMENU)IDC_LIC_TEXT, NULL, NULL);

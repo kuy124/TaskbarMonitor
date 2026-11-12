@@ -40,6 +40,44 @@ function Expand-Update([string]$ZipPath, [string]$Destination, [version]$Version
     if ([version]$actual -ne $Version) { throw 'Executable version does not match release' }
 }
 
+function Test-UpdateDownload([string]$Path, $Asset) {
+    if ((Get-Item -LiteralPath $Path).Length -ne $Asset.size) { throw 'Download size mismatch' }
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ine $Asset.digest.Substring(7)) {
+        throw 'Download checksum mismatch'
+    }
+}
+
+function Replace-Executable([string]$Source, [string]$Destination, $Backup) {
+    # PowerShell otherwise binds a null string argument as an empty filename.
+    if (!$Backup) { $Backup = [NullString]::Value }
+    [IO.File]::Replace($Source, $Destination, $Backup)
+}
+
+function Install-Update([string]$Replacement, [string]$Executable, [string]$Backup) {
+    $replaced = $false
+    $started = $null
+    try {
+        Replace-Executable $Replacement $Executable $Backup
+        $replaced = $true
+        $started = Start-Process -FilePath $Executable -ArgumentList '--autostart' -PassThru
+        if ($started.WaitForExit(3000)) { throw 'Updated app did not stay running' }
+        return $started
+    } catch {
+        $failure = $_.Exception.Message
+        if ($started) {
+            try {
+                if (!$started.HasExited) { $started.Kill(); $started.WaitForExit(5000) | Out-Null }
+            } catch {} finally { $started.Dispose() }
+        }
+        if ($replaced) {
+            try { Replace-Executable $Backup $Executable $null } catch {
+                throw "$failure. Could not restore the original; it is preserved at $Backup. $($_.Exception.Message)"
+            }
+        }
+        throw $failure
+    }
+}
+
 function Test-UpdatesEnabled {
     $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\TaskbarMonitor' -ErrorAction SilentlyContinue
     return $null -eq $settings -or $null -eq $settings.AutoUpdate -or $settings.AutoUpdate -ne 0
@@ -69,6 +107,7 @@ if ($SelfTest) {
         if (!$rejected) { throw "Accepted unsafe asset: $field" }
         $release.assets[0].$field = $original
     }
+    . (Join-Path $PSScriptRoot '../tests/UpdaterInstallTest.ps1')
     Write-Output 'Updater validation passed'
     return
 }
@@ -77,7 +116,6 @@ $stage = $null
 $lock = $null
 $closed = $false
 $backup = $null
-$replaced = $false
 $accepted = $false
 try {
     if (!(Test-UpdatesEnabled)) { return }
@@ -103,8 +141,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     $archive = Join-Path $stage 'update.zip'
     Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $archive -TimeoutSec 120
-    if ((Get-Item -LiteralPath $archive).Length -ne $asset.size) { throw 'Download size mismatch' }
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $asset.digest.Substring(7)) { throw 'Download checksum mismatch' }
+    Test-UpdateDownload $archive $asset
     $replacement = Join-Path $stage 'TaskbarMonitor.exe'
     Expand-Update $archive $replacement $version
     if (!(Test-UpdatesEnabled) -or $app.HasExited) { return }
@@ -130,24 +167,21 @@ public static class UpdateWindow {
         return $true
     }, [IntPtr]::Zero) | Out-Null
     if (!$app.WaitForExit(15000)) { throw 'App did not close; update cancelled' }
+    $app.Dispose()
     $closed = $true
     $backup = Join-Path $stage 'previous.exe'
-    [IO.File]::Replace($replacement, $Executable, $backup)
-    $replaced = $true
-    $restarted = Start-Process -FilePath $Executable -ArgumentList '--autostart' -PassThru
-    Start-Sleep -Seconds 3
-    if ($restarted.HasExited) { throw 'Updated app did not stay running' }
+    Install-Update $replacement $Executable $backup | Out-Null
     $closed = $false
 } catch {
     $failure = $_.Exception.Message
     if ($closed) {
-        if ($replaced -and (Test-Path -LiteralPath $backup)) {
-            try { [IO.File]::Replace($backup, $Executable, $null) } catch {
-                # Keep the backup if restoration fails; never delete the last working copy.
-                $stage = $null
-            }
+        $restartPath = $Executable
+        if ($backup -and (Test-Path -LiteralPath $backup)) {
+            # Failed rollback: preserve and restart the old copy, not the failed update.
+            $restartPath = $backup
+            $stage = $null
         }
-        Start-Process -FilePath $Executable -ArgumentList '--autostart' -ErrorAction SilentlyContinue
+        Start-Process -FilePath $restartPath -ArgumentList '--autostart' -ErrorAction SilentlyContinue
     }
     # Offline, API rate limits, and unwritable folders must not disrupt the monitor.
     if ($accepted) {

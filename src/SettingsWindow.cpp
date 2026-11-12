@@ -2,6 +2,9 @@
 #include "Config.h"
 #include "Theme.h"
 #include "Metrics.h"
+#include "TemperatureEstimate.h"
+#include "Elevation.h"
+#include <algorithm>
 #include "TaskbarSync.h"
 #include "Resource.h"
 
@@ -12,6 +15,7 @@
 #define IDC_TAB_2           (IDC_TAB_BTN_BASE + 2) // Typography
 #define IDC_TAB_3           (IDC_TAB_BTN_BASE + 3) // Colors and Theme
 #define IDC_TAB_4           (IDC_TAB_BTN_BASE + 4) // Advanced
+#define IDC_TAB_5           (IDC_TAB_BTN_BASE + 5) // Temperatures
 
 // Label IDs
 #define IDC_LBL_DRIVE       1101
@@ -33,6 +37,11 @@
 #define IDC_LBL_SENSOR_NOTE 1118
 #define IDC_PAGE_TITLE 1119
 #define IDC_PAGE_DESCRIPTION 1120
+#define IDC_BTN_SENSOR_NOTICES 1123
+#define IDC_BTN_SENSOR_TEST 1125
+#define IDC_LBL_SENSOR_STATUS 1126
+#define IDC_BTN_SENSOR_USE 1127
+#define IDC_BTN_SENSOR_ELEVATE 1128
 
 // Settings UI Appearance (0: System, 1: Dark, 2: Light)
 #define IDC_COMBO_SETTINGSTHEME 1113
@@ -43,6 +52,7 @@ static int g_currentTab = 0;
 static int g_settingsThemeMode = 0;
 static AutostartStatus s_autostartStatusAtOpen = AUTOSTART_UNAVAILABLE;
 static bool s_autostartCheckboxDirty = false;
+static bool s_sensorCheckPending = false;
 
 static bool s_isDarkMode = true;
 static COLORREF s_colWindowBg      = RGB(30, 32, 35);
@@ -61,27 +71,6 @@ static HBRUSH hBgBrush = NULL, hCardBrush = NULL, hControlBrush = NULL;
 static HPEN hCardBorderPen = NULL;
 
 static int Px(int value) { return MulDiv(value, s_dpi, 96); }
-
-static int ReadSettingsThemeMode() {
-    HKEY key;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, CONFIG_REGISTRY_KEY, 0, KEY_READ, &key) != ERROR_SUCCESS)
-        return 0;
-    DWORD value = 0, type = 0, size = sizeof(value);
-    LONG result = RegQueryValueExW(key, L"SettingsTheme", NULL, &type, (LPBYTE)&value, &size);
-    RegCloseKey(key);
-    return result == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(value) && value <= 2
-        ? (int)value : 0;
-}
-
-static void SaveSettingsThemeMode() {
-    HKEY key;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, CONFIG_REGISTRY_KEY, 0, NULL, 0,
-                        KEY_WRITE, NULL, &key, NULL) == ERROR_SUCCESS) {
-        DWORD value = (DWORD)g_settingsThemeMode;
-        RegSetValueExW(key, L"SettingsTheme", 0, REG_DWORD, (const BYTE*)&value, sizeof(value));
-        RegCloseKey(key);
-    }
-}
 
 static void SetSettingsFonts(HWND hWnd) {
     if (hFontTitle) DeleteObject(hFontTitle);
@@ -116,6 +105,7 @@ static void LayoutSettingsControls(HWND hWnd) {
         { IDC_TAB_0, 14, 110, 152, 42 }, { IDC_TAB_1, 14, 156, 152, 42 },
         { IDC_TAB_2, 14, 202, 152, 42 }, { IDC_TAB_3, 14, 248, 152, 42 },
         { IDC_TAB_4, 14, 294, 152, 42 },
+        { IDC_TAB_5, 14, 342, 152, 42 },
 
         { IDC_CHK_NET, 216, 144, 214, 25 }, { IDC_CHK_CPU, 216, 179, 214, 25 },
         { IDC_CHK_GPU, 216, 214, 214, 25 }, { IDC_CHK_RAM, 216, 249, 214, 25 },
@@ -150,15 +140,29 @@ static void LayoutSettingsControls(HWND hWnd) {
         { IDC_COMBO_SETTINGSTHEME, 468, 172, 246, 180 },
         { IDC_CHK_AUTOSTART, 216, 237, 490, 26 }, { IDC_LBL_AUTOSTART_STATUS, 216, 269, 500, 23 },
         { IDC_CHK_CLICKTHROUGH, 216, 330, 490, 26 },
-        { IDC_CHK_LOCAL_SENSORS, 216, 383, 490, 26 }, { IDC_LBL_SENSOR_NOTE, 216, 414, 500, 23 },
-        { IDC_CHK_AUTOUPDATE, 216, 451, 490, 26 },
+        { IDC_CHK_AUTOUPDATE, 216, 383, 490, 26 },
+
+        { IDC_LBL_SENSOR_NOTE, 216, 116, 500, 26 },
+        { IDC_BTN_SENSOR_NOTICES, 216, 148, 246, 30 }, { IDC_BTN_SENSOR_TEST, 468, 148, 246, 30 },
+        { IDC_LBL_SENSOR_STATUS, 216, 184, 500, 88 },
+        { IDC_CHK_HARDWARE_SENSORS, 216, 400, 500, 26 },
+        { IDC_BTN_SENSOR_ELEVATE, 216, 442, 246, 34 }, { IDC_BTN_SENSOR_USE, 468, 442, 246, 34 },
 
         { IDC_BTN_DEFAULTS, 214, 510, 157, 35 }, { IDC_BTN_APPLY, 450, 510, 78, 35 },
         { IDC_BTN_CANCEL, 536, 510, 78, 35 }, { IDC_BTN_SAVE, 622, 510, 118, 35 },
     };
+    RECT client;
+    GetClientRect(hWnd, &client);
+    int footer = client.bottom - Px(70);
     for (const auto& p : positions) {
         HWND control = GetDlgItem(hWnd, p.id);
-        if (control) MoveWindow(control, Px(p.x), Px(p.y), Px(p.width), Px(p.height), TRUE);
+        int y = Px(p.y), height = Px(p.height);
+        if (p.id == IDC_BTN_DEFAULTS || p.id == IDC_BTN_APPLY || p.id == IDC_BTN_CANCEL || p.id == IDC_BTN_SAVE)
+            y = client.bottom - Px(50);
+        if (p.id == IDC_BTN_SENSOR_USE || p.id == IDC_BTN_SENSOR_ELEVATE) y = footer - Px(48);
+        if (p.id == IDC_CHK_HARDWARE_SENSORS) y = footer - Px(90);
+        if (p.id == IDC_LBL_SENSOR_STATUS) height = std::min(height, std::max(0, footer - Px(98) - y));
+        if (control) MoveWindow(control, Px(p.x), y, Px(p.width), height, TRUE);
     }
 }
 
@@ -290,13 +294,14 @@ static void PickColor(HWND hWnd, COLORREF& targetColor, int btnId) {
 static void ShowTabControls(HWND hWnd, int tabIndex) {
     g_currentTab = tabIndex;
 
-    static const wchar_t* titles[] = { L"Metrics", L"Position", L"Text", L"Colors", L"System" };
+    static const wchar_t* titles[] = { L"Metrics", L"Position", L"Text", L"Colors", L"System", L"Temperatures" };
     static const wchar_t* descriptions[] = {
         L"Choose the readings shown on the taskbar.",
         L"Place the monitor and set the space between readings.",
         L"Set the typeface used for labels and values.",
         L"Choose a preset or edit the monitor palette.",
-        L"Control updates, startup, and how the monitor handles clicks."
+        L"Control updates, startup, and how the monitor handles clicks.",
+        L"Read verified CPU and GPU sensors built into TaskbarMonitor."
     };
     SetWindowTextW(GetDlgItem(hWnd, IDC_PAGE_TITLE), titles[tabIndex]);
     SetWindowTextW(GetDlgItem(hWnd, IDC_PAGE_DESCRIPTION), descriptions[tabIndex]);
@@ -324,7 +329,11 @@ static void ShowTabControls(HWND hWnd, int tabIndex) {
     const int tab4Controls[] = { 
         IDC_LBL_RATE, IDC_EDIT_RATE, IDC_CHK_AUTOSTART, IDC_CHK_CLICKTHROUGH,
          IDC_LBL_AUTOSTART_STATUS, IDC_LBL_SETTINGSTHEME, IDC_COMBO_SETTINGSTHEME,
-         IDC_CHK_LOCAL_SENSORS, IDC_LBL_SENSOR_NOTE, IDC_CHK_AUTOUPDATE, 0
+         IDC_CHK_AUTOUPDATE, 0
+    };
+    const int tab5Controls[] = {
+        IDC_CHK_HARDWARE_SENSORS, IDC_LBL_SENSOR_NOTE, IDC_BTN_SENSOR_NOTICES, IDC_BTN_SENSOR_TEST,
+        IDC_LBL_SENSOR_STATUS, IDC_BTN_SENSOR_USE, IDC_BTN_SENSOR_ELEVATE, 0
     };
 
     auto SetControlsVisible = [&](const int* ids, bool visible) {
@@ -339,8 +348,9 @@ static void ShowTabControls(HWND hWnd, int tabIndex) {
     SetControlsVisible(tab2Controls, tabIndex == 2);
     SetControlsVisible(tab3Controls, tabIndex == 3);
     SetControlsVisible(tab4Controls, tabIndex == 4);
+    SetControlsVisible(tab5Controls, tabIndex == 5);
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         InvalidateRect(GetDlgItem(hWnd, IDC_TAB_BTN_BASE + i), NULL, TRUE);
     }
     InvalidateRect(hWnd, NULL, TRUE);
@@ -396,7 +406,62 @@ static void RefreshAutostartControls(HWND hWnd, bool updateCheckboxAndSnapshot) 
     EnableWindow(hCheckbox, !info.isPolicyManaged);
 }
 
-static void ApplyCurrentSettings(HWND hWnd) {
+static void UpdateSensorStatus(HWND hWnd) {
+    HardwareSensorStatus status = GetHardwareSensorStatus();
+    wchar_t text[512];
+    bool usable = status.checked && status.running &&
+                  (status.temperatures.cpu >= 0 || status.temperatures.gpu >= 0);
+    if (!status.checked) {
+        wcscpy_s(text, s_sensorCheckPending ? L"Reading built-in hardware sensors..."
+                                         : L"LibreHardwareMonitor is built in and starts automatically.");
+    } else {
+        s_sensorCheckPending = false;
+        if (status.running) {
+            wchar_t cpu[32], gpu[32];
+            FormatTemperature(status.temperatures.cpu, false, cpu, _countof(cpu));
+            FormatTemperature(status.temperatures.gpu, false, gpu, _countof(gpu));
+            const wchar_t* detail = L"Measured readings; ~ marks a load-based estimate.";
+            if (status.temperatures.cpu < 0 && !status.driverInstalled)
+                detail = L"CPU hardware access needs the signed PawnIO driver.";
+            else if (status.temperatures.cpu < 0 && !status.administrator)
+                detail = L"Enable sensor access applies settings, then requests UAC.";
+            else if (status.temperatures.cpu >= 90)
+                detail = L"Measured CPU is 90+ C. Verify cooling; this is not an estimate.";
+            swprintf(text, _countof(text), L"CPU %ls (%ls)\nGPU %ls (%ls)\n%ls", cpu,
+                     status.cpuSource.empty() ? L"sensor unavailable" : status.cpuSource.c_str(), gpu,
+                     status.gpuSource.empty() ? L"sensor unavailable" : status.gpuSource.c_str(), detail);
+        } else {
+            swprintf(text, _countof(text), L"Embedded sensor backend could not start (0x%08lX).\n.NET Framework 4.7.2 or later is required. Native readings and estimates remain available.",
+                     static_cast<unsigned long>(status.error));
+        }
+    }
+    SetDlgItemTextW(hWnd, IDC_LBL_SENSOR_STATUS, text);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_SENSOR_USE), usable);
+    HWND elevation = GetDlgItem(hWnd, IDC_BTN_SENSOR_ELEVATE);
+    bool elevated = IsProcessElevated();
+    bool pending = ElevationRestartPending();
+    EnableWindow(elevation, !elevated && !pending &&
+                 (status.temperatures.cpu < 0 || status.temperatures.gpu < 0));
+    SetWindowTextW(elevation, elevated ? L"Administrator access enabled"
+                                    : pending ? L"Restarting with permission..." : L"Enable sensor access");
+    SendMessageW(elevation, BCM_SETSHIELD, 0, !elevated);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_SENSOR_TEST), !s_sensorCheckPending);
+}
+
+void RefreshHardwareSensorStatus() {
+    if (g_hSettingsWnd && IsWindow(g_hSettingsWnd)) UpdateSensorStatus(g_hSettingsWnd);
+}
+
+void ShowTemperatureSettings() {
+    if (g_hSettingsWnd && IsWindow(g_hSettingsWnd)) {
+        g_currentTab = 5;
+        ShowTabControls(g_hSettingsWnd, 5);
+        InvalidateRect(g_hSettingsWnd, NULL, TRUE);
+    }
+}
+
+static bool ApplyCurrentSettings(HWND hWnd) {
+    MonitorConfig previous = g_config;
     bool requestedAutostart = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOSTART) == BST_CHECKED);
     bool initialAutostartEnabled = s_autostartStatusAtOpen == AUTOSTART_ENABLED;
 
@@ -413,7 +478,8 @@ static void ApplyCurrentSettings(HWND hWnd) {
     g_config.transparentBg   = (IsDlgButtonChecked(hWnd, IDC_CHK_TRANS_BG) == BST_CHECKED);
     g_config.autoContrast    = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOCONTRAST) == BST_CHECKED);
     g_config.clickThrough    = (IsDlgButtonChecked(hWnd, IDC_CHK_CLICKTHROUGH) == BST_CHECKED);
-    g_config.useLocalSensors = (IsDlgButtonChecked(hWnd, IDC_CHK_LOCAL_SENSORS) == BST_CHECKED);
+    g_config.useLibreHardware = (IsDlgButtonChecked(hWnd, IDC_CHK_HARDWARE_SENSORS) == BST_CHECKED);
+    g_config.settingsTheme = g_settingsThemeMode;
     g_config.autoUpdate = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOUPDATE) == BST_CHECKED);
 
     HWND hComboDrive = GetDlgItem(hWnd, IDC_COMBO_DRIVE);
@@ -462,18 +528,22 @@ static void ApplyCurrentSettings(HWND hWnd) {
     g_config.colDivider    = s_colDivider;
     g_config.colBackground = s_colBg;
 
+    if (!SaveConfig(hWnd)) {
+        g_config = previous;
+        return false;
+    }
+
+    bool startupSaved = true;
     if (requestedAutostart != initialAutostartEnabled) {
         if (!SetAutostart(requestedAutostart)) {
+            startupSaved = false;
             MessageBoxW(hWnd,
                 L"Windows did not accept the startup change. Review Windows Startup Apps and try again if needed.",
                 L"TaskbarMonitor Startup", MB_OK | MB_ICONWARNING);
         }
     }
     g_config.runAtStartup = IsAutostartEnabled();
-    s_autostartCheckboxDirty = false;
-
-    SaveConfig();
-    SaveSettingsThemeMode();
+    s_autostartCheckboxDirty = !startupSaved;
     RefreshAutostartControls(hWnd, true);
 
     if (g_hOwnerWnd && IsWindow(g_hOwnerWnd)) {
@@ -489,6 +559,7 @@ static void ApplyCurrentSettings(HWND hWnd) {
         SyncWithTaskbar(g_hOwnerWnd);
         InvalidateRect(g_hOwnerWnd, NULL, TRUE);
     }
+    return startupSaved;
 }
 
 static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -510,8 +581,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
             0, 0, 0, 0, hWnd, (HMENU)IDC_PAGE_DESCRIPTION, NULL, NULL);
 
-        const wchar_t* tabTitles[] = { L"Metrics", L"Position", L"Text", L"Colors", L"System" };
-        for (int i = 0; i < 5; i++) {
+        const wchar_t* tabTitles[] = { L"Metrics", L"Position", L"Text", L"Colors", L"System", L"Temperatures" };
+        for (int i = 0; i < 6; i++) {
             CreateWindowExW(0, L"BUTTON", tabTitles[i],
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                 0, 0, 0, 0, hWnd, (HMENU)(UINT_PTR)(IDC_TAB_BTN_BASE + i), NULL, NULL);
@@ -594,9 +665,18 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"BUTTON", L"Start with Windows", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 168, 420, 22, hWnd, (HMENU)IDC_CHK_AUTOSTART, NULL, NULL);
         CreateWindowExW(0, L"STATIC", L"Startup status: Checking...", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 194, 420, 20, hWnd, (HMENU)IDC_LBL_AUTOSTART_STATUS, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Let clicks pass through to the taskbar", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 222, 420, 22, hWnd, (HMENU)IDC_CHK_CLICKTHROUGH, NULL, NULL);
-        CreateWindowExW(0, L"BUTTON", L"Use LibreHardwareMonitor temperatures", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 258, 445, 22, hWnd, (HMENU)IDC_CHK_LOCAL_SENSORS, NULL, NULL);
-        CreateWindowExW(0, L"STATIC", L"Requires its local web server on port 8085.", WS_CHILD | SS_LEFT | SS_NOPREFIX,
+        // --- TAB 5: Embedded LibreHardwareMonitor ---
+        CreateWindowExW(0, L"BUTTON", L"Use built-in LibreHardwareMonitor sensors", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 0, 0, hWnd, (HMENU)IDC_CHK_HARDWARE_SENSORS, NULL, NULL);
+        CreateWindowExW(0, L"STATIC",
+            L"~ marks estimates. Enable sensor access applies settings and uses UAC.",
+            WS_CHILD | SS_LEFT | SS_NOPREFIX,
             0, 0, 0, 0, hWnd, (HMENU)IDC_LBL_SENSOR_NOTE, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Source and licenses", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, hWnd, (HMENU)IDC_BTN_SENSOR_NOTICES, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Refresh sensors", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, hWnd, (HMENU)IDC_BTN_SENSOR_TEST, NULL, NULL);
+        CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, hWnd, (HMENU)IDC_LBL_SENSOR_STATUS, NULL, NULL);
+        CreateWindowExW(0, L"BUTTON", L"Use detected readings", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, hWnd, (HMENU)IDC_BTN_SENSOR_USE, NULL, NULL);
+        HWND elevation = CreateWindowExW(0, L"BUTTON", L"Enable sensor access", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0, hWnd, (HMENU)IDC_BTN_SENSOR_ELEVATE, NULL, NULL);
+        SendMessageW(elevation, BCM_SETSHIELD, 0, TRUE);
 
         // Bottom Action Buttons (Flush and Proportional)
         CreateWindowExW(0, L"BUTTON", L"Reset to defaults", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 16, 412, 95, 34, hWnd, (HMENU)IDC_BTN_DEFAULTS, NULL, NULL);
@@ -622,8 +702,10 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CheckDlgButton(hWnd, IDC_CHK_AUTOCONTRAST, g_config.autoContrast ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_AUTOSTART, g_config.runAtStartup ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_CLICKTHROUGH, g_config.clickThrough ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hWnd, IDC_CHK_LOCAL_SENSORS, g_config.useLocalSensors ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hWnd, IDC_CHK_HARDWARE_SENSORS, g_config.useLibreHardware ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hWnd, IDC_CHK_AUTOUPDATE, g_config.autoUpdate ? BST_CHECKED : BST_UNCHECKED);
+        s_sensorCheckPending = false;
+        UpdateSensorStatus(hWnd);
         s_autostartCheckboxDirty = false;
 
         wchar_t driveStrings[512];
@@ -736,8 +818,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         LineTo(hdc, Px(166), Px(91));
         MoveToEx(hdc, Px(202), Px(105), NULL);
         LineTo(hdc, client.right - Px(20), Px(105));
-        MoveToEx(hdc, Px(202), Px(490), NULL);
-        LineTo(hdc, client.right - Px(20), Px(490));
+        MoveToEx(hdc, Px(202), client.bottom - Px(70), NULL);
+        LineTo(hdc, client.right - Px(20), client.bottom - Px(70));
         SelectObject(hdc, oldPen);
 
         SetBkMode(hdc, TRANSPARENT);
@@ -788,7 +870,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;
 
         // Navigation follows the settings pages, without a second row of tabs.
-        if (dis->CtlID >= IDC_TAB_0 && dis->CtlID <= IDC_TAB_4) {
+        if (dis->CtlID >= IDC_TAB_0 && dis->CtlID <= IDC_TAB_5) {
             int tabIndex = dis->CtlID - IDC_TAB_BTN_BASE;
             bool isSelected = (g_currentTab == tabIndex);
             FillRect(dis->hDC, &dis->rcItem, hCardBrush);
@@ -940,8 +1022,38 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             return 0;
         }
 
-        if (id >= IDC_TAB_0 && id <= IDC_TAB_4) {
+        if (id >= IDC_TAB_0 && id <= IDC_TAB_5) {
             ShowTabControls(hWnd, id - IDC_TAB_BTN_BASE);
+            return 0;
+        }
+
+        if (id == IDC_BTN_SENSOR_NOTICES) {
+            HardwareSensorStatus status = GetHardwareSensorStatus();
+            const wchar_t* path = status.noticesPath.empty()
+                ? L"https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/v0.9.6/THIRD-PARTY-NOTICES.txt"
+                : status.noticesPath.c_str();
+            if ((INT_PTR)ShellExecuteW(hWnd, L"open", path, NULL, NULL, SW_SHOWNORMAL) <= 32)
+                MessageBoxW(hWnd, L"Could not open the component licenses.", L"TaskbarMonitor", MB_OK | MB_ICONWARNING);
+            return 0;
+        }
+        if (id == IDC_BTN_SENSOR_TEST || id == IDC_BTN_SENSOR_USE) {
+        if (id == IDC_BTN_SENSOR_TEST) {
+                s_sensorCheckPending = RequestHardwareSensorRefresh();
+                UpdateSensorStatus(hWnd);
+            } else {
+                HardwareSensorStatus status = GetHardwareSensorStatus();
+                if (!status.checked || !status.running ||
+                    (status.temperatures.cpu < 0 && status.temperatures.gpu < 0)) return 0;
+                CheckDlgButton(hWnd, IDC_CHK_HARDWARE_SENSORS, BST_CHECKED);
+                if (status.temperatures.cpu >= 0) CheckDlgButton(hWnd, IDC_CHK_CPUTEMP, BST_CHECKED);
+                if (status.temperatures.gpu >= 0) CheckDlgButton(hWnd, IDC_CHK_GPUTEMP, BST_CHECKED);
+                ApplyCurrentSettings(hWnd);
+            }
+            return 0;
+        }
+        if (id == IDC_BTN_SENSOR_ELEVATE) {
+            if (IsWindowEnabled(GetDlgItem(hWnd, id)) && ApplyCurrentSettings(hWnd))
+                PostMessageW(g_hOwnerWnd, WM_REQUEST_ELEVATION, 0, 0);
             return 0;
         }
 
@@ -989,8 +1101,7 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         } else if (id == IDC_BTN_APPLY) {
             ApplyCurrentSettings(hWnd);
         } else if (id == IDC_BTN_SAVE) {
-            ApplyCurrentSettings(hWnd);
-            DestroyWindow(hWnd);
+            if (ApplyCurrentSettings(hWnd)) DestroyWindow(hWnd);
         } else if (id == IDC_BTN_CANCEL || id == IDCANCEL) {
             DestroyWindow(hWnd);
         }
@@ -1030,7 +1141,8 @@ void OpenSettingsWindow(HINSTANCE hInstance, HWND hParentWnd) {
         return;
     }
 
-    g_settingsThemeMode = ReadSettingsThemeMode();
+    g_settingsThemeMode = g_config.settingsTheme;
+    s_sensorCheckPending = false;
 
     WNDCLASSEXW swc = { sizeof(WNDCLASSEXW) };
     swc.lpfnWndProc = SettingsWndProc;

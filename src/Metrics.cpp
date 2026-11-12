@@ -1,63 +1,31 @@
 #include "Metrics.h"
 #include "Config.h"
-#include "SensorFeed.h"
 #include "TemperatureEstimate.h"
 #include "NetworkRate.h"
+#include "GpuUsage.h"
 #include <algorithm>
-#include <winhttp.h>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <system_error>
 
 SystemMetrics g_metrics = { 0.0, -1.0, 0.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 100.0, false, false, false, false };
+
+namespace sampling {
+// Only the worker touches these copies or the sensor handles below.
+static MonitorConfig g_config;
+static SystemMetrics g_metrics = ::g_metrics;
 
 static FILETIME g_prevIdleTime = {0}, g_prevKernelTime = {0}, g_prevUserTime = {0};
 static PDH_HQUERY g_hPdhQuery = NULL;
 static PDH_HCOUNTER g_hGpuCounter = NULL;
 static PDH_HCOUNTER g_hDiskCounter = NULL;
-static PDH_HCOUNTER g_hCpuTempCounter = NULL;
 
 static NetworkRate g_networkRate;
 static bool g_pdhReady = false;
-static ULONGLONG g_lastLocalPoll = 0;
+static ULONGLONG g_lastSensorPoll = 0;
 static SensorTemperatures g_localTemperatures;
-static ULONGLONG g_lastWmiPoll = 0;
-static double g_lastWmiTemp = -1.0;
-
-static SensorTemperatures ReadLocalTemperatures() {
-    SensorTemperatures result;
-    HINTERNET session = WinHttpOpen(L"TaskbarMonitor/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return result;
-    WinHttpSetTimeouts(session, 200, 200, 200, 200);
-    HINTERNET connection = WinHttpConnect(session, L"127.0.0.1", 8085, 0);
-    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", L"/data.json", NULL,
-                                          WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0) : NULL;
-    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                      WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, NULL)) {
-        DWORD status = 0, size = sizeof(status);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) && status == 200) {
-            std::string body;
-            char buffer[4096];
-            DWORD read = 0;
-            bool complete = false;
-            while (body.size() < 1024 * 1024) {
-                DWORD count = static_cast<DWORD>(std::min<size_t>(sizeof(buffer), 1024 * 1024 - body.size()));
-                if (!WinHttpReadData(request, buffer, count, &read)) break;
-                if (!read) { complete = true; break; }
-                body.append(buffer, read);
-            }
-            if (complete) result = ParseSensorTemperatures(body);
-        }
-    }
-    if (request) WinHttpCloseHandle(request);
-    if (connection) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return result;
-}
-
-// WMI for ACPI CPU Temperature
-static IWbemLocator* g_pWbemLocator = NULL;
-static IWbemServices* g_pWbemServices = NULL;
-static bool g_wmiInitialized = false;
+static HardwareSensorStatus g_sensorStatus;
 
 // Dynamic NVIDIA NVML Interface (Standard official driver backend)
 typedef int (*nvmlInit_t)();
@@ -118,29 +86,18 @@ static ULONGLONG FileTimeToUint64(const FILETIME& ft) {
     return (((ULONGLONG)ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
 }
 
-static void InitWmi() {
-    if (g_wmiInitialized) return;
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    HRESULT hr = CoCreateInstance(CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)&g_pWbemLocator);
-    if (SUCCEEDED(hr) && g_pWbemLocator) {
-        BSTR bstrNamespace = SysAllocString(L"ROOT\\WMI");
-        hr = g_pWbemLocator->ConnectServer(
-            bstrNamespace, NULL, NULL, NULL, 0, NULL, NULL, &g_pWbemServices
-        );
-        SysFreeString(bstrNamespace);
-        if (SUCCEEDED(hr) && g_pWbemServices) {
-            CoSetProxyBlanket(g_pWbemServices, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
-                              RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE);
-            g_wmiInitialized = true;
-        }
-    }
-}
-
 void InitMetrics() {
+    g_prevIdleTime = g_prevKernelTime = g_prevUserTime = {};
+    g_networkRate.Reset();
+    g_lastSensorPoll = 0;
+    g_localTemperatures = {};
+    g_sensorStatus = {};
+    g_nvmlInitialized = false;
+    g_nvmlDevice = NULL;
+    g_nvGpuCount = 0;
     if (PdhOpenQuery(NULL, 0, &g_hPdhQuery) == ERROR_SUCCESS) {
         PdhAddEnglishCounterW(g_hPdhQuery, L"\\GPU Engine(*)\\Utilization Percentage", 0, &g_hGpuCounter);
         PdhAddEnglishCounterW(g_hPdhQuery, L"\\PhysicalDisk(_Total)\\% Disk Time", 0, &g_hDiskCounter);
-        PdhAddEnglishCounterW(g_hPdhQuery, L"\\Thermal Zone Information(*)\\Temperature", 0, &g_hCpuTempCounter);
         PdhCollectQueryData(g_hPdhQuery);
     }
 
@@ -193,19 +150,17 @@ void InitMetrics() {
         }
     }
 
-    InitWmi();
 }
 
 void CleanupMetrics() {
     if (g_hPdhQuery) {
         PdhCloseQuery(g_hPdhQuery);
         g_hPdhQuery = NULL;
+        g_hGpuCounter = g_hDiskCounter = NULL;
     }
-    if (g_pWbemServices) { g_pWbemServices->Release(); g_pWbemServices = NULL; }
-    if (g_pWbemLocator)  { g_pWbemLocator->Release();  g_pWbemLocator = NULL; }
-    g_wmiInitialized = false;
 
     if (g_nvmlInitialized && g_nvmlShutdown) g_nvmlShutdown();
+    g_nvmlInitialized = false;
     if (g_hNvmlDll) { FreeLibrary(g_hNvmlDll); g_hNvmlDll = NULL; }
     if (g_hNvApiDll) { FreeLibrary(g_hNvApiDll); g_hNvApiDll = NULL; }
     if (g_hAdlDll) {
@@ -218,89 +173,22 @@ void CleanupMetrics() {
 void UpdateCPUTemp() {
     if (!g_config.showCPUTemp) return;
 
-    if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.cpu >= 0.0) {
+    if (g_config.useLibreHardware && g_lastSensorPoll != 0 && g_localTemperatures.cpu >= 0.0) {
         g_metrics.cpuTemp = g_localTemperatures.cpu;
         g_metrics.cpuTempEstimated = false;
         return;
     }
 
-    bool foundSensor = false;
-
-    // 1. Check PDH Thermal Counter
-    if (g_pdhReady && g_hCpuTempCounter) {
-        PDH_FMT_COUNTERVALUE cv;
-        if (PdhGetFormattedCounterValue(g_hCpuTempCounter, PDH_FMT_DOUBLE, NULL, &cv) == ERROR_SUCCESS) {
-            if (cv.CStatus == PDH_CSTATUS_VALID_DATA && cv.doubleValue > 200.0) {
-                double c = cv.doubleValue - 273.15;
-                if (c >= 20.0 && c <= 115.0) {
-                    g_metrics.cpuTemp = c;
-                    g_metrics.cpuTempEstimated = false;
-                    foundSensor = true;
-                }
-            }
-        }
-    }
-
-    // 2. Query WMI MSAcpi_ThermalZoneTemperature
-    ULONGLONG now = GetTickCount64();
-    if (!foundSensor && g_lastWmiPoll != 0 && now - g_lastWmiPoll < 5000 && g_lastWmiTemp >= 0.0) {
-        g_metrics.cpuTemp = g_lastWmiTemp;
-        g_metrics.cpuTempEstimated = false;
-        foundSensor = true;
-    }
-    if (!foundSensor && (g_lastWmiPoll == 0 || now - g_lastWmiPoll >= 5000)) {
-        g_lastWmiPoll = now;
-        g_lastWmiTemp = -1.0;
-        if (!g_wmiInitialized) InitWmi();
-        if (g_pWbemServices) {
-            BSTR bstrQuery = SysAllocString(L"SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
-            BSTR bstrWQL = SysAllocString(L"WQL");
-            IEnumWbemClassObject* pEnumerator = NULL;
-            HRESULT hr = g_pWbemServices->ExecQuery(bstrWQL, bstrQuery, WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, NULL, &pEnumerator);
-            SysFreeString(bstrQuery);
-            SysFreeString(bstrWQL);
-
-            if (SUCCEEDED(hr) && pEnumerator) {
-                IWbemClassObject* pclsObj = NULL;
-                ULONG uReturn = 0;
-                double maxTemp = -1.0;
-                while (pEnumerator->Next(150, 1, &pclsObj, &uReturn) == S_OK && uReturn > 0) {
-                    VARIANT vtProp;
-                    VariantInit(&vtProp);
-                    if (SUCCEEDED(pclsObj->Get(L"CurrentTemperature", 0, &vtProp, 0, 0))) {
-                        if (vtProp.vt == VT_I4 || vtProp.vt == VT_UI4) {
-                            double kelvinTenths = (double)vtProp.lVal;
-                            double celsius = (kelvinTenths / 10.0) - 273.15;
-                            if (celsius >= 20.0 && celsius <= 115.0 && celsius > maxTemp) {
-                                maxTemp = celsius;
-                            }
-                        }
-                        VariantClear(&vtProp);
-                    }
-                    pclsObj->Release();
-                }
-                pEnumerator->Release();
-                if (maxTemp > 0.0) {
-                    g_lastWmiTemp = maxTemp;
-                    g_metrics.cpuTemp = maxTemp;
-                    g_metrics.cpuTempEstimated = false;
-                    foundSensor = true;
-                }
-            }
-        }
-    }
-
-    if (!foundSensor) {
-        g_metrics.cpuTemp = EstimateTemperature(g_metrics.cpuUsage, g_metrics.cpuTemp,
-                                                g_metrics.cpuTempEstimated, 38.0, 42.0);
-        g_metrics.cpuTempEstimated = true;
-    }
+    // ACPI thermal zones are not identified CPU sensors; never label them as a CPU reading.
+    g_metrics.cpuTemp = EstimateTemperature(g_metrics.cpuUsage, g_metrics.cpuTemp,
+                                            g_metrics.cpuTempEstimated, 38.0, 42.0);
+    g_metrics.cpuTempEstimated = true;
 }
 
 void UpdateGPUTemp() {
     if (!g_config.showGPUTemp) return;
 
-    if (g_config.useLocalSensors && g_lastLocalPoll != 0 && g_localTemperatures.gpu >= 0.0) {
+    if (g_config.useLibreHardware && g_lastSensorPoll != 0 && g_localTemperatures.gpu >= 0.0) {
         g_metrics.gpuTemp = g_localTemperatures.gpu;
         g_metrics.gpuTempEstimated = false;
         return;
@@ -361,19 +249,14 @@ void UpdateGPU() {
                 PDH_FMT_COUNTERVALUE_ITEM_W* pItems = (PDH_FMT_COUNTERVALUE_ITEM_W*)malloc(bufferSize);
                 if (pItems) {
                     if (PdhGetFormattedCounterArrayW(g_hGpuCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, pItems) == ERROR_SUCCESS) {
-                        double total = 0.0;
-                        bool valid = false;
+                        GpuUsage usage;
                         for (DWORD i = 0; i < itemCount; i++) {
-                            if (pItems[i].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA) {
-                                total += pItems[i].FmtValue.doubleValue;
-                                valid = true;
+                            if (pItems[i].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA ||
+                                pItems[i].FmtValue.CStatus == PDH_CSTATUS_NEW_DATA) {
+                                usage.Add(pItems[i].szName, pItems[i].FmtValue.doubleValue);
                             }
                         }
-                        if (valid) {
-                            g_metrics.gpuUsage = total;
-                            if (g_metrics.gpuUsage > 100.0) g_metrics.gpuUsage = 100.0;
-                            if (g_metrics.gpuUsage < 0.0)   g_metrics.gpuUsage = 0.0;
-                        }
+                        g_metrics.gpuUsage = usage.Usage();
                     }
                     free(pItems);
                 }
@@ -505,14 +388,16 @@ void UpdateBattery() {
 void UpdateAllMetrics() {
     g_pdhReady = g_hPdhQuery && PdhCollectQueryData(g_hPdhQuery) == ERROR_SUCCESS;
     ULONGLONG now = GetTickCount64();
-    if (g_config.useLocalSensors) {
-        if (g_lastLocalPoll == 0 || now - g_lastLocalPoll >= 2000) {
-            g_lastLocalPoll = now;
-            g_localTemperatures = (g_config.showCPUTemp || g_config.showGPUTemp)
-                ? ReadLocalTemperatures() : SensorTemperatures{};
+    if (g_config.useLibreHardware) {
+        if (g_lastSensorPoll == 0 || now - g_lastSensorPoll >= 2000) {
+            g_lastSensorPoll = now;
+            if (g_config.showCPUTemp || g_config.showGPUTemp) {
+                g_sensorStatus = ReadHardwareTemperatures();
+                g_localTemperatures = g_sensorStatus.temperatures;
+            } else g_localTemperatures = {};
         }
     } else {
-        g_lastLocalPoll = 0;
+        g_lastSensorPoll = 0;
         g_localTemperatures = {};
     }
     UpdateCPU();
@@ -521,6 +406,116 @@ void UpdateAllMetrics() {
     UpdateMemory();
     UpdateNetwork();
     UpdateBattery();
+}
+
+// ponytail: one worker coalesces refresh requests; split backends if sampling latency demands it.
+static std::mutex g_mutex;
+static std::condition_variable g_wake;
+static std::thread g_thread;
+static MonitorConfig g_pendingConfig;
+static SystemMetrics g_snapshot = ::g_metrics;
+static HardwareSensorStatus g_sensorSnapshot;
+static bool g_requested = false;
+static bool g_stop = false;
+static bool g_probeRequested = false;
+static DWORD g_threadId = 0;
+static HWND g_notifyWindow = NULL;
+
+static void Run() {
+    HRESULT com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    bool cancellable = SUCCEEDED(com) && SUCCEEDED(CoEnableCallCancellation(NULL));
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_threadId = GetCurrentThreadId();
+    }
+    InitMetrics();
+    for (;;) {
+        MonitorConfig config;
+        bool sample;
+        bool probe;
+        {
+            std::unique_lock<std::mutex> lock(g_mutex);
+            g_wake.wait(lock, [] { return g_stop || g_requested || g_probeRequested; });
+            if (g_stop) break;
+            config = g_pendingConfig;
+            sample = g_requested;
+            probe = g_probeRequested;
+            g_requested = false;
+            g_probeRequested = false;
+        }
+        if (sample) {
+            g_config = config;
+            UpdateAllMetrics();
+        }
+        if (probe) g_sensorStatus = ReadHardwareTemperatures();
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_snapshot = g_metrics;
+            if (!g_probeRequested) g_sensorSnapshot = g_sensorStatus;
+        }
+        if (g_notifyWindow) PostMessageW(g_notifyWindow, WM_METRICS_READY, 0, 0);
+    }
+    CleanupMetrics();
+    CloseHardwareSensors();
+    if (cancellable) CoDisableCallCancellation(NULL);
+    if (SUCCEEDED(com)) CoUninitialize();
+}
+} // namespace sampling
+
+bool InitMetrics(HWND notifyWindow) {
+    std::lock_guard<std::mutex> lock(sampling::g_mutex);
+    if (sampling::g_thread.joinable()) return true;
+    sampling::g_pendingConfig = g_config;
+    sampling::g_config = g_config;
+    sampling::g_metrics = sampling::g_snapshot = g_metrics;
+    sampling::g_sensorSnapshot = {};
+    sampling::g_notifyWindow = notifyWindow;
+    sampling::g_threadId = 0;
+    sampling::g_probeRequested = false;
+    sampling::g_stop = false;
+    sampling::g_requested = true;
+    try { sampling::g_thread = std::thread(sampling::Run); }
+    catch (const std::system_error&) { return false; }
+    return true;
+}
+
+void CleanupMetrics() {
+    DWORD threadId;
+    {
+        std::lock_guard<std::mutex> lock(sampling::g_mutex);
+        sampling::g_stop = true;
+        threadId = sampling::g_threadId;
+    }
+    sampling::g_wake.notify_one();
+    if (threadId) CoCancelCall(threadId, 0);
+    if (sampling::g_thread.joinable()) sampling::g_thread.join();
+}
+
+void UpdateAllMetrics() {
+    std::lock_guard<std::mutex> lock(sampling::g_mutex);
+    if (!sampling::g_thread.joinable()) return;
+    sampling::g_pendingConfig = g_config;
+    sampling::g_requested = true;
+    sampling::g_wake.notify_one();
+}
+
+SystemMetrics GetLatestMetrics() {
+    std::lock_guard<std::mutex> lock(sampling::g_mutex);
+    return sampling::g_snapshot;
+}
+
+bool RequestHardwareSensorRefresh() {
+    std::lock_guard<std::mutex> lock(sampling::g_mutex);
+    if (!sampling::g_thread.joinable()) return false;
+    sampling::g_probeRequested = true;
+    sampling::g_sensorSnapshot = {};
+    sampling::g_wake.notify_one();
+    return true;
+}
+
+HardwareSensorStatus GetHardwareSensorStatus() {
+    std::lock_guard<std::mutex> lock(sampling::g_mutex);
+    return sampling::g_sensorSnapshot;
 }
 
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size) {

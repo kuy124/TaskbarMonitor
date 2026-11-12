@@ -1,10 +1,12 @@
 #include "Updater.h"
 #include "Config.h"
+#include "Elevation.h"
 #include <string>
 
 void CheckForUpdates() {
     static HANDLE worker = NULL;
-    if (!g_config.autoUpdate) return;
+    // ponytail: no privileged temporary scripts; use a low-privilege helper for admin-session updates.
+    if (!g_config.autoUpdate || IsProcessElevated()) return;
     if (worker) {
         if (WaitForSingleObject(worker, 0) == WAIT_TIMEOUT) return;
         CloseHandle(worker);

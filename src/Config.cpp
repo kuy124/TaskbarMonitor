@@ -169,10 +169,11 @@ void SetDefaults() {
     g_config.netUnit         = NET_UNIT_BITS;
     g_config.clickThrough    = false;
     g_config.runAtStartup    = false;
-    g_config.useLocalSensors = false;
+    g_config.useLibreHardware = true;
     g_config.autoUpdate      = true;
 
     g_config.themeMode       = THEME_AUTO;
+    g_config.settingsTheme   = 0;
     g_config.transparentBg   = true;
     g_config.autoContrast    = true;
     g_config.colLabel        = RGB(200, 205, 215);
@@ -229,10 +230,11 @@ void LoadConfig() {
         ReadDword(L"RefreshRate", g_config.refreshRateMs);
         ReadDword(L"NetUnit", g_config.netUnit);
         ReadBool(L"ClickThrough", g_config.clickThrough);
-        ReadBool(L"UseLocalSensors", g_config.useLocalSensors);
+        ReadBool(L"UseLibreHardware", g_config.useLibreHardware);
         ReadBool(L"AutoUpdate", g_config.autoUpdate);
 
         ReadDword(L"ThemeMode", g_config.themeMode);
+        ReadDword(L"SettingsTheme", g_config.settingsTheme);
         ReadBool(L"TransparentBg", g_config.transparentBg);
         ReadBool(L"AutoContrast", g_config.autoContrast);
         ReadColor(L"ColLabel", g_config.colLabel);
@@ -259,6 +261,7 @@ void LoadConfig() {
     if (g_config.alignment < ALIGN_LEFT || g_config.alignment > ALIGN_CUSTOM) g_config.alignment = ALIGN_LEFT;
     if (g_config.netUnit < NET_UNIT_BYTES || g_config.netUnit > NET_UNIT_BITS) g_config.netUnit = NET_UNIT_BITS;
     if (g_config.themeMode < THEME_AUTO || g_config.themeMode > THEME_CUSTOM) g_config.themeMode = THEME_AUTO;
+    if (g_config.settingsTheme < 0 || g_config.settingsTheme > 2) g_config.settingsTheme = 0;
     if (g_config.itemSpacing < 0 || g_config.itemSpacing > 100) g_config.itemSpacing = 10;
     if (g_config.fontSize < 1 || g_config.fontSize > 24) g_config.fontSize = 11;
     if (g_config.refreshRateMs < 100 || g_config.refreshRateMs > 10000) g_config.refreshRateMs = 1000;
@@ -266,15 +269,19 @@ void LoadConfig() {
         wcscmp(g_config.targetDrive + 1, L":\\") != 0) wcscpy_s(g_config.targetDrive, L"C:\\");
 }
 
-void SaveConfig() {
-    HKEY hKey;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, CONFIG_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+bool SaveConfig(HWND owner) {
+    HKEY hKey = NULL;
+    LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, CONFIG_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (error == ERROR_SUCCESS) {
+        auto WriteValue = [&](const wchar_t* name, DWORD type, const BYTE* value, DWORD size) {
+            LONG result = RegSetValueExW(hKey, name, 0, type, value, size);
+            if (error == ERROR_SUCCESS) error = result;
+        };
         auto WriteDword = [&](const wchar_t* name, DWORD val) {
-            RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
+            WriteValue(name, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
         };
         auto WriteBool = [&](const wchar_t* name, bool val) {
-            DWORD d = val ? 1 : 0;
-            RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&d, sizeof(DWORD));
+            WriteDword(name, val ? 1 : 0);
         };
 
         WriteBool(L"ShowNet", g_config.showNet);
@@ -298,10 +305,11 @@ void SaveConfig() {
         WriteDword(L"RefreshRate", (DWORD)g_config.refreshRateMs);
         WriteDword(L"NetUnit", (DWORD)g_config.netUnit);
         WriteBool(L"ClickThrough", g_config.clickThrough);
-        WriteBool(L"UseLocalSensors", g_config.useLocalSensors);
+        WriteBool(L"UseLibreHardware", g_config.useLibreHardware);
         WriteBool(L"AutoUpdate", g_config.autoUpdate);
 
         WriteDword(L"ThemeMode", (DWORD)g_config.themeMode);
+        WriteDword(L"SettingsTheme", (DWORD)g_config.settingsTheme);
         WriteBool(L"TransparentBg", g_config.transparentBg);
         WriteBool(L"AutoContrast", g_config.autoContrast);
         WriteDword(L"ColLabel", (DWORD)g_config.colLabel);
@@ -311,11 +319,21 @@ void SaveConfig() {
         WriteDword(L"ColDivider", (DWORD)g_config.colDivider);
         WriteDword(L"ColBg", (DWORD)g_config.colBackground);
 
-        RegSetValueExW(hKey, L"TargetDrive", 0, REG_SZ, (const BYTE*)g_config.targetDrive, (DWORD)((wcslen(g_config.targetDrive) + 1) * sizeof(wchar_t)));
-        RegSetValueExW(hKey, L"FontFamily", 0, REG_SZ, (const BYTE*)g_config.fontFamily, (DWORD)((wcslen(g_config.fontFamily) + 1) * sizeof(wchar_t)));
+        WriteValue(L"TargetDrive", REG_SZ, (const BYTE*)g_config.targetDrive, (DWORD)((wcslen(g_config.targetDrive) + 1) * sizeof(wchar_t)));
+        WriteValue(L"FontFamily", REG_SZ, (const BYTE*)g_config.fontFamily, (DWORD)((wcslen(g_config.fontFamily) + 1) * sizeof(wchar_t)));
 
-        RegCloseKey(hKey);
+        LONG result = RegCloseKey(hKey);
+        if (error == ERROR_SUCCESS) error = result;
     }
+    if (error == ERROR_SUCCESS) return true;
+    wchar_t detail[256] = {}, message[640] = {};
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                   error, 0, detail, _countof(detail), NULL);
+    swprintf_s(message, L"Settings could not be fully saved. Some values may already have been written.\n\n"
+                       L"Check permissions for HKCU\\Software\\TaskbarMonitor and try Apply again.\n\n"
+                       L"Windows error %ld: %ls", error, detail);
+    MessageBoxW(owner, message, L"TaskbarMonitor Settings", MB_OK | MB_ICONWARNING);
+    return false;
 }
 
 int CalculateTotalWidth(HDC) {

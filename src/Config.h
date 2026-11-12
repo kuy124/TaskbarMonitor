@@ -54,11 +54,12 @@ struct MonitorConfig {
     int netUnit;          // NetUnit
     bool clickThrough;    // Mouse clicks pass through
     bool runAtStartup;
-    bool useLocalSensors;
+    bool useLibreHardware;
     bool autoUpdate;
 
     // Theme & Colors
     int themeMode;        // ThemeMode
+    int settingsTheme;    // System, dark, light
     bool transparentBg;   // True: transparent color-key, False: tinted background
     bool autoContrast;    // Automatically adjust font colors for high readability
     COLORREF colLabel;
@@ -90,7 +91,7 @@ extern int g_monitorHeight;
 
 void SetDefaults();
 void LoadConfig();
-void SaveConfig();
+bool SaveConfig(HWND owner = NULL);
 int CalculateTotalWidth(HDC hdc = NULL);
 
 bool IsAutostartEnabled();

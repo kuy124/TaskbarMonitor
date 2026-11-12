@@ -10,6 +10,7 @@
 #include "License.h"
 #include "Resource.h"
 #include "Updater.h"
+#include "Elevation.h"
 
 HWND g_hWnd = NULL;
 static HWND g_hHostWnd = NULL;
@@ -18,6 +19,7 @@ UINT g_uTaskbarCreatedMsg = 0;
 NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
 
 static void CreateMonitorWindow(HINSTANCE hInstance);
+static void RefreshTrayTooltip();
 static void RecoverMonitorWindow() {
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (!taskbar) return;
@@ -59,6 +61,13 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
     case WM_TIMER:
         if (wParam == 3) RecoverMonitorWindow();
         if (wParam == 4) CheckForUpdates();
+        if (wParam == TIMER_ELEVATION) { PollElevatedRestart(hWnd); RefreshHardwareSensorStatus(); }
+        return 0;
+    case WM_METRICS_READY:
+        g_metrics = GetLatestMetrics();
+        RefreshTrayTooltip();
+        RefreshHardwareSensorStatus();
+        if (g_hWnd && IsWindow(g_hWnd)) InvalidateRect(g_hWnd, NULL, FALSE);
         return 0;
     case WM_TRAYICON:
         RecoverMonitorWindow();
@@ -66,6 +75,8 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
     case WM_DESTROY:
         KillTimer(hWnd, 3);
+        KillTimer(hWnd, TIMER_ELEVATION);
+        CancelElevatedRestart();
         if (g_hWnd && IsWindow(g_hWnd)) DestroyWindow(g_hWnd);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         CleanupTaskbarHooks();
@@ -87,6 +98,10 @@ static void RefreshTrayTooltip() {
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_REQUEST_ELEVATION:
+        RequestElevatedRestart(g_hSettingsWnd, g_hHostWnd);
+        RefreshHardwareSensorStatus();
+        return 0;
     case WM_CREATE: {
         if (!g_initialized) LoadConfig();
         LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
@@ -96,7 +111,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_curWidth = CalculateTotalWidth();
         UpdateThemeColors();
         if (!g_initialized) {
-            InitMetrics();
+            if (!InitMetrics(g_hHostWnd)) {
+                MessageBoxW(hWnd, L"The hardware sampler could not be started.", L"TaskbarMonitor", MB_OK | MB_ICONERROR);
+                return -1;
+            }
             g_initialized = true;
         }
         SetTimer(hWnd, TIMER_METRICS, g_config.refreshRateMs, NULL);
@@ -142,11 +160,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hWnd, NULL, FALSE);
             } else if (cmd == ID_TRAY_CLICKTHROUGH) {
                 g_config.clickThrough = !g_config.clickThrough;
-                LONG_PTR exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
-                if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
-                else exStyle &= ~WS_EX_TRANSPARENT;
-                SetWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle);
-                SaveConfig();
+                if (SaveConfig(hWnd)) {
+                    LONG_PTR exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
+                    if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
+                    else exStyle &= ~WS_EX_TRANSPARENT;
+                    SetWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle);
+                } else g_config.clickThrough = !g_config.clickThrough;
             } else if (cmd == ID_TRAY_EXIT) {
                 DestroyWindow(g_hHostWnd);
             }
@@ -172,8 +191,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         if (wParam == TIMER_METRICS) {
             UpdateAllMetrics();
-            RefreshTrayTooltip();
-            InvalidateRect(hWnd, NULL, FALSE);
         } else if (wParam == TIMER_PLACEMENT) {
             TickTaskbarPlacement(hWnd);
         }
@@ -227,6 +244,10 @@ static void CreateMonitorWindow(HINSTANCE hInstance) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
+    bool elevatedRestart = false;
+    // Never load elevated native sensor DLLs from a writable application folder or PATH.
+    if (IsProcessElevated() && !SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)) return 1;
+    if (!AcceptElevatedRestart(elevatedRestart)) return 1;
     HANDLE instanceMutex = CreateMutexW(NULL, FALSE, L"Local\\TaskbarMonitor.SingleInstance");
     if (!instanceMutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -264,6 +285,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
                                   L"TaskbarMonitorHost", WS_POPUP,
                                   0, 0, 0, 0, NULL, NULL, hInstance, NULL);
     if (!g_hHostWnd) return 0;
+    // Explorer sends these notifications from a lower-integrity process after elevation.
+    ChangeWindowMessageFilterEx(g_hHostWnd, WM_TRAYICON, MSGFLT_ALLOW, NULL);
+    if (g_uTaskbarCreatedMsg) ChangeWindowMessageFilterEx(g_hHostWnd, g_uTaskbarCreatedMsg, MSGFLT_ALLOW, NULL);
     CreateMonitorWindow(hInstance);
     if (!g_hWnd) {
         DestroyWindow(g_hHostWnd);
@@ -288,6 +312,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);
     if (openSettings) {
         OpenSettingsWindow(hInstance, g_hWnd);
+        if (elevatedRestart) ShowTemperatureSettings();
     } else if (!bAutoStart) {
         AutostartInfo autostartInfo = QueryAutostartStatus();
         if (autostartInfo.status != AUTOSTART_ENABLED) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "Common.h"
+#include "HardwareSensors.h"
 
 struct SystemMetrics {
     double cpuUsage;
@@ -21,15 +22,10 @@ struct SystemMetrics {
 
 extern SystemMetrics g_metrics;
 
-void InitMetrics();
+bool InitMetrics(HWND notifyWindow);
 void CleanupMetrics();
-void UpdateCPU();
-void UpdateCPUTemp();
-void UpdateGPU();
-void UpdateGPUTemp();
-void UpdateDisk();
-void UpdateMemory();
-void UpdateNetwork();
-void UpdateBattery();
 void UpdateAllMetrics();
+SystemMetrics GetLatestMetrics();
+bool RequestHardwareSensorRefresh();
+HardwareSensorStatus GetHardwareSensorStatus();
 void FormatSpeed(double speedBytes, wchar_t* outBuf, size_t size);

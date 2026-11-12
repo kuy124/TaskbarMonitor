@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "Theme.h"
 #include "Metrics.h"
+#include "TemperatureEstimate.h"
 #include "TaskbarSync.h"
 #include <algorithm>
 #include <vector>
@@ -119,32 +120,28 @@ void RenderOverlay(HWND hWnd, HDC hdc) {
         if (g_config.showCPUTemp && g_config.showGPUTemp) {
             col.hasRow2 = true;
             wcscpy_s(col.row1.label, L"CPU");
-            if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
-            col.row1.sample = L"100°C";
+            FormatTemperature(g_metrics.cpuTemp, g_metrics.cpuTempEstimated, col.row1.value, 32);
+            col.row1.sample = L"~100°C";
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
 
             wcscpy_s(col.row2.label, L"GPU");
-            if (g_metrics.gpuTemp < 0) wcscpy_s(col.row2.value, L"N/A");
-            else swprintf(col.row2.value, 32, L"%.0f°C", g_metrics.gpuTemp);
-            col.row2.sample = L"100°C";
+            FormatTemperature(g_metrics.gpuTemp, g_metrics.gpuTempEstimated, col.row2.value, 32);
+            col.row2.sample = L"~100°C";
             col.row2.colLabel = g_theme.label;
             col.row2.colValue = g_theme.value;
         } else if (g_config.showCPUTemp) {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"CPU");
-            if (g_metrics.cpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.cpuTemp);
-            col.row1.sample = L"100°C";
+            FormatTemperature(g_metrics.cpuTemp, g_metrics.cpuTempEstimated, col.row1.value, 32);
+            col.row1.sample = L"~100°C";
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         } else {
             col.hasRow2 = false;
             wcscpy_s(col.row1.label, L"GPU");
-            if (g_metrics.gpuTemp < 0) wcscpy_s(col.row1.value, L"N/A");
-            else swprintf(col.row1.value, 32, L"%.0f°C", g_metrics.gpuTemp);
-            col.row1.sample = L"100°C";
+            FormatTemperature(g_metrics.gpuTemp, g_metrics.gpuTempEstimated, col.row1.value, 32);
+            col.row1.sample = L"~100°C";
             col.row1.colLabel = g_theme.label;
             col.row1.colValue = g_theme.value;
         }
