@@ -8,6 +8,7 @@
 build/
 build-check/
 build-verify/
+build-compat/
 out/
 Debug/
 Release/

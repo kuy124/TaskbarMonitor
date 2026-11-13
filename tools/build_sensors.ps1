@@ -48,7 +48,7 @@ try {
 $compiler = Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'csc.exe'
 if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is required' }
 $bridge = Join-Path $output 'TaskbarMonitor.Sensors.dll'
-& $compiler /nologo /optimize+ /target:library "/out:$bridge" "/reference:$(Join-Path $output 'LibreHardwareMonitorLib.dll')" (Join-Path $root 'src\SensorBridge.cs')
+& $compiler /nologo /optimize+ /target:library "/out:$bridge" /reference:System.Management.dll "/reference:$(Join-Path $output 'LibreHardwareMonitorLib.dll')" (Join-Path $root 'src\SensorBridge.cs') (Join-Path $root 'src\AdditionalSensors.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the embedded sensor bridge' }
 
 $source = "https://raw.githubusercontent.com/LibreHardwareMonitor/LibreHardwareMonitor/v$version"

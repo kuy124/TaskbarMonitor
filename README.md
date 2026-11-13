@@ -54,13 +54,47 @@ Open **Settings → Temperatures**:
 
 LibreHardwareMonitorLib 0.9.6, its dependencies, and the sensor bridge are embedded in TaskbarMonitor.exe and loaded in-process. Readings start automatically; there is **no separate LibreHardwareMonitor app, web server, port, or connection setup**.
 
-The page shows detected temperatures and their sensor sources, **Refresh sensors**, and **Use detected readings**. CPU package and physical Tdie sensors take priority over core/hotspot readings; generic ACPI zones and temperature limits are not presented as measured CPU temperatures. Real readings above 90°C remain visible with a cooling warning; they are never capped to make them look safer.
+The page shows detected temperatures and their sensor sources, **Refresh sensors**, and **Use detected readings**. CPU package and physical Tdie sensors take priority over core/hotspot readings. Supported motherboard and embedded-controller sensors explicitly labelled as CPU temperatures are used only when direct CPU readings are unavailable; these may measure socket rather than die temperature. Generic ACPI zones and temperature limits are not presented as measured CPU temperatures. Proprietary laptop sensors used by tools such as NitroSense still require support in LibreHardwareMonitor. Real readings above 90°C remain visible with a cooling warning; they are never capped to make them look safer.
+
+GPU detection also checks Windows WDDM driver temperature data and explicitly GPU-labelled motherboard/embedded-controller sensors when direct GPU readings are unavailable. This includes integrated GPUs where the driver exposes a temperature; CPU package temperature is never substituted for GPU temperature. On multi-GPU systems the monitor shows one preferred reading, not separate per-adapter temperatures.
+
+Sensor matching accepts numbered CPU packages/cores, CPU die/diode/PECI labels, GPU edge/junction labels, and explicitly labelled iGPU/dGPU board sensors. Memory, VRM, thermal limits, and distance-to-TjMax readings are excluded. A device that fails to update no longer prevents other devices from reporting temperatures.
 
 When a reading is unavailable, **Enable sensor access** applies pending settings and requests Windows UAC permission. The current monitor stays running until an elevated copy validates the handoff; cancellation or launch failure leaves it open. The new copy reloads your settings and opens Temperatures. Use the same Windows account when approving UAC.
 
 Some CPU readings also require the signed PawnIO driver. Elevation does not install a missing driver or disable Windows security protections. Unknown readings show N/A on this page; taskbar estimates remain marked with `~`. Automatic updates pause in elevated sessions so the temporary PowerShell updater never runs with administrator rights; normal launches resume update checks.
 
 The .NET Framework 4.7.2+ runtime is required (included on current Windows releases). Bundled files are extracted automatically to a content-addressed cache under `%LOCALAPPDATA%\TaskbarMonitor\Sensors`; their bytes are checked against the embedded resources before loading. The managed runtime increases memory usage compared with the native-only monitor. Upstream licenses and source links are embedded and available in the license dialog and **Source and licenses**.
+
+### Additional temperature sources
+
+Missing built-in readings automatically fall back to:
+
+- **Intel IGCL temperature sensors:** GPU sensor enumeration, independent of the
+  power-telemetry temperature field already used by LibreHardwareMonitor.
+- **Intel Level Zero Sysman:** GPU-specific sensors when an installed `ze_loader.dll`
+  and graphics driver support standalone Sysman.
+- **HWiNFO shared memory:** enable Shared Memory Support in a running HWiNFO.
+  Reads CPU and explicitly labelled GPU / CPU GT Cores temperatures; rejects stale
+  data. The free HWiNFO edition limits shared-memory sessions to 12 hours.
+- **AIDA64 shared memory:** enable Preferences → Hardware Monitoring → External
+  Applications → Enable shared memory in a running AIDA64.
+- **LibreHardwareMonitor / OpenHardwareMonitor WMI:** reads an available running
+  monitor's CPU/GPU temperature provider.
+
+Settings → Temperatures identifies the selected source. External programs are optional,
+not bundled or started automatically. Optional fallbacks run every five seconds on the
+sensor worker, not the UI thread. Intel APIs require a compatible 64-bit runtime and
+driver. Unsupported sensors stay unavailable; CPU package temperature is never used
+as GPU temperature. With multiple GPUs, additional fallbacks select the hottest valid
+GPU sensor, excluding memory and thermal-limit readings.
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_temperature_device.ps1`
+to capture live readings and Intel API availability (defaults to `build-compat/sensors`).
+Run from an elevated PowerShell to compare protected sensor access.
+On Lenovo 82KA / Intel UHD i3-1115G4, HWiNFO's **CPU GT Cores** sensor was verified
+as a measured GPU source. Keep HWiNFO running with shared memory enabled; closing
+it removes this fallback.
 
 ## Settings
 

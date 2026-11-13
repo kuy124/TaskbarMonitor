@@ -8,7 +8,7 @@ set(SENSOR_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sensors")
 add_custom_command(OUTPUT "${SENSOR_DIRECTORY}/EmbeddedSensors.rc"
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_sensors.ps1" -Output "${SENSOR_DIRECTORY}"
-    DEPENDS tools/build_sensors.ps1 src/SensorBridge.cs
+    DEPENDS tools/build_sensors.ps1 src/SensorBridge.cs src/AdditionalSensors.cs
     VERBATIM)
 add_custom_target(SensorBundle DEPENDS "${SENSOR_DIRECTORY}/EmbeddedSensors.rc")
 include_directories("${SENSOR_DIRECTORY}")

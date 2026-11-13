@@ -44,7 +44,7 @@ void SetLicenseAccepted(bool accepted) {
 }
 
 static const wchar_t* kLicenseText =
-    L"TaskbarMonitor \x2014 Release Edition 1.2.6\r\n"
+    L"TaskbarMonitor \x2014 Release Edition 1.2.7\r\n"
     L"=================================================\r\n"
     L"\r\n"
     L"By running, installing, or using TaskbarMonitor you agree to the terms of\r\n"

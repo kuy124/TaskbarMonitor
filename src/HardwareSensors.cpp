@@ -206,15 +206,15 @@ HardwareSensorStatus ReadHardwareTemperatures() {
     if (FAILED(result.error)) return result;
     DWORD cpu = temperatures & 65535, gpu = temperatures >> 16;
     DWORD cpuSource = sources & 255, gpuSource = sources >> 8;
-    if (cpuSource > 5 || gpuSource > 2 || (cpu != 65535) != (cpuSource != 0) || (gpu != 65535) != (gpuSource != 0)) {
+    if (cpuSource > 9 || gpuSource > 9 || (cpu != 65535) != (cpuSource != 0) || (gpu != 65535) != (gpuSource != 0)) {
         result.error = E_INVALIDARG;
         return result;
     }
     if ((cpu != 65535 && cpu > 1500) || (gpu != 65535 && gpu > 1500)) { result.error = E_INVALIDARG; return result; }
     result.temperatures.cpu = cpu == 65535 ? -1.0 : cpu / 10.0;
     result.temperatures.gpu = gpu == 65535 ? -1.0 : gpu / 10.0;
-    const wchar_t* cpuSources[] = { L"", L"CPU core / CCD (hottest)", L"Core Average", L"CPU (Tctl/Tdie)", L"CPU (Tdie)", L"CPU Package" };
-    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core" };
+    const wchar_t* cpuSources[] = { L"", L"CPU core / CCD (hottest)", L"Core Average", L"CPU (Tctl/Tdie)", L"CPU (Tdie)", L"CPU Package", L"Motherboard / EC CPU (fallback)", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory" };
+    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core", L"Motherboard / EC GPU (fallback)", L"Windows GPU driver (WDDM)", L"Intel IGCL temperature sensor", L"Intel Level Zero Sysman", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory" };
     result.cpuSource = cpuSources[cpuSource];
     result.gpuSource = gpuSources[gpuSource];
     result.running = true;
