@@ -181,7 +181,7 @@ void UpdateCPUTemp() {
 
     // ACPI thermal zones are not identified CPU sensors; never label them as a CPU reading.
     g_metrics.cpuTemp = EstimateTemperature(g_metrics.cpuUsage, g_metrics.cpuTemp,
-                                            g_metrics.cpuTempEstimated, 38.0, 42.0);
+                                            g_metrics.cpuTempEstimated, 45.0, 50.0);
     g_metrics.cpuTempEstimated = true;
 }
 

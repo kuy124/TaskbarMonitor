@@ -413,7 +413,7 @@ static void UpdateSensorStatus(HWND hWnd) {
                   (status.temperatures.cpu >= 0 || status.temperatures.gpu >= 0);
     if (!status.checked) {
         wcscpy_s(text, s_sensorCheckPending ? L"Reading built-in hardware sensors..."
-                                         : L"LibreHardwareMonitor is built in and starts automatically.");
+                                         : L"The built-in sensor engine starts automatically.");
     } else {
         s_sensorCheckPending = false;
         if (status.running) {
@@ -421,8 +421,10 @@ static void UpdateSensorStatus(HWND hWnd) {
             FormatTemperature(status.temperatures.cpu, false, cpu, _countof(cpu));
             FormatTemperature(status.temperatures.gpu, false, gpu, _countof(gpu));
             const wchar_t* detail = L"Measured readings; ~ marks a load-based estimate.";
-            if (status.temperatures.cpu < 0 && !status.driverInstalled)
-                detail = L"CPU hardware access needs the signed PawnIO driver.";
+            if (status.cpuSource == L"Acer NitroSense telemetry" || status.gpuSource == L"Acer NitroSense telemetry")
+                detail = L"NitroSense telemetry covers sensors Windows cannot expose; ~ marks an estimate.";
+            else if (status.temperatures.cpu < 0 && !status.driverInstalled)
+                detail = L"CPU hardware access needs a vendor sensor API, or open NitroSense monitoring UI for telemetry.";
             else if (status.temperatures.cpu < 0 && !status.administrator)
                 detail = L"Enable sensor access applies settings, then requests UAC.";
             else if (status.temperatures.cpu >= 90)
@@ -665,8 +667,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         CreateWindowExW(0, L"BUTTON", L"Start with Windows", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 168, 420, 22, hWnd, (HMENU)IDC_CHK_AUTOSTART, NULL, NULL);
         CreateWindowExW(0, L"STATIC", L"Startup status: Checking...", WS_CHILD | SS_LEFT | SS_NOPREFIX, 36, 194, 420, 20, hWnd, (HMENU)IDC_LBL_AUTOSTART_STATUS, NULL, NULL);
         CreateWindowExW(0, L"BUTTON", L"Let clicks pass through to the taskbar", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 36, 222, 420, 22, hWnd, (HMENU)IDC_CHK_CLICKTHROUGH, NULL, NULL);
-        // --- TAB 5: Embedded LibreHardwareMonitor ---
-        CreateWindowExW(0, L"BUTTON", L"Use built-in LibreHardwareMonitor sensors", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 0, 0, hWnd, (HMENU)IDC_CHK_HARDWARE_SENSORS, NULL, NULL);
+        // --- TAB 5: Embedded sensor engine ---
+        CreateWindowExW(0, L"BUTTON", L"Use built-in hardware sensors", WS_CHILD | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 0, 0, hWnd, (HMENU)IDC_CHK_HARDWARE_SENSORS, NULL, NULL);
         CreateWindowExW(0, L"STATIC",
             L"~ marks estimates. Enable sensor access applies settings and uses UAC.",
             WS_CHILD | SS_LEFT | SS_NOPREFIX,
@@ -1029,10 +1031,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
 
         if (id == IDC_BTN_SENSOR_NOTICES) {
             HardwareSensorStatus status = GetHardwareSensorStatus();
-            const wchar_t* path = status.noticesPath.empty()
-                ? L"https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/v0.9.6/THIRD-PARTY-NOTICES.txt"
-                : status.noticesPath.c_str();
-            if ((INT_PTR)ShellExecuteW(hWnd, L"open", path, NULL, NULL, SW_SHOWNORMAL) <= 32)
+            const wchar_t* path = status.noticesPath.empty() ? L"" : status.noticesPath.c_str();
+            if (path[0] == L'\0' || (INT_PTR)ShellExecuteW(hWnd, L"open", path, NULL, NULL, SW_SHOWNORMAL) <= 32)
                 MessageBoxW(hWnd, L"Could not open the component licenses.", L"TaskbarMonitor", MB_OK | MB_ICONWARNING);
             return 0;
         }

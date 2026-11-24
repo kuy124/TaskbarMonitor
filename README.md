@@ -2,7 +2,7 @@
 
 <img src="assets/logo.svg" alt="TaskbarMonitor logo" width="72" height="72">
 
-Hardware monitor that runs inside the Windows taskbar. Written in C++17 using Win32 APIs and double-buffered GDI, with LibreHardwareMonitor embedded for direct sensor readings.
+Hardware monitor that runs inside the Windows taskbar. Written in C++17 using Win32 APIs and double-buffered GDI, with a small in-process sensor engine for direct and vendor-provided readings.
 
 The logo source is [assets/logo.svg](assets/logo.svg). The Windows icon and PNG are generated with `python tools/generate_icon.py` (requires Pillow and PyMuPDF for asset generation only).
 
@@ -38,9 +38,9 @@ Network readings show transfer rates, not cumulative totals. Small transfers use
 | :--- | :--- | :--- |
 | Network | Upload / Download speed | GetIfTable2 across active non-loopback interfaces |
 | CPU Usage | CPU % | GetSystemTimes kernel, idle, and user differentials |
-| CPU Temp | Degrees Celsius | Embedded LibreHardwareMonitor, native thermal zones, or explicitly marked estimates |
+| CPU Temp | Degrees Celsius | Windows thermal zones, vendor APIs, external monitor telemetry, or explicitly marked estimates |
 | GPU Usage | GPU % | PDH \GPU Engine(*)\Utilization Percentage (capped at 100%) |
-| GPU Temp | Degrees Celsius | Embedded LibreHardwareMonitor, NVIDIA/AMD driver APIs, or explicitly marked estimates |
+| GPU Temp | Degrees Celsius | NVIDIA/AMD/Intel GPU APIs, Windows WDDM, external monitor telemetry, or explicitly marked estimates |
 | Memory | RAM % and Used GB | GlobalMemoryStatusEx |
 | Disk | Activity % and Free Space | PDH PhysicalDisk(_Total) and GetDiskFreeSpaceExW |
 | Battery | Charge % and AC status | GetSystemPowerStatus (hides automatically on AC-only desktops) |
@@ -52,26 +52,28 @@ If a system lacks an exposed thermal sensor, the monitor estimates temperature b
 
 Open **Settings → Temperatures**:
 
-LibreHardwareMonitorLib 0.9.6, its dependencies, and the sensor bridge are embedded in TaskbarMonitor.exe and loaded in-process. Readings start automatically; there is **no separate LibreHardwareMonitor app, web server, port, or connection setup**.
+A small sensor engine is embedded in TaskbarMonitor.exe and loaded in-process. It queries Windows APIs and optional vendor libraries already present on the system. Readings start automatically; there is **no separate monitor app, web server, port, or connection setup** for the built-in engine.
 
-The page shows detected temperatures and their sensor sources, **Refresh sensors**, and **Use detected readings**. CPU package and physical Tdie sensors take priority over core/hotspot readings. Supported motherboard and embedded-controller sensors explicitly labelled as CPU temperatures are used only when direct CPU readings are unavailable; these may measure socket rather than die temperature. Generic ACPI zones and temperature limits are not presented as measured CPU temperatures. Proprietary laptop sensors used by tools such as NitroSense still require support in LibreHardwareMonitor. Real readings above 90°C remain visible with a cooling warning; they are never capped to make them look safer.
+The page shows detected temperatures and their sensor sources, **Refresh sensors**, and **Use detected readings**. CPU package and physical Tdie sources take priority over core/hotspot readings. Supported motherboard and embedded-controller sensors explicitly labelled as CPU temperatures are used only when direct CPU readings are unavailable; these may measure socket rather than die temperature. Generic ACPI/WMI zones are low-priority CPU fallbacks and keep their source label; they can measure another part of the package. Proprietary laptop sensors used by tools such as NitroSense are read from NitroSense local telemetry while its monitoring UI is open; otherwise they stay unavailable.
+ Real readings above 90°C remain visible with a cooling warning; they are never capped to make them look safer.
 
-GPU detection also checks Windows WDDM driver temperature data and explicitly GPU-labelled motherboard/embedded-controller sensors when direct GPU readings are unavailable. This includes integrated GPUs where the driver exposes a temperature; CPU package temperature is never substituted for GPU temperature. On multi-GPU systems the monitor shows one preferred reading, not separate per-adapter temperatures.
+GPU detection checks NVIDIA NVML, AMD ADL, Intel IGCL/Sysman, Windows WDDM driver data, and explicitly GPU-labelled motherboard/embedded-controller sensors. CPU package temperature is never substituted for GPU temperature. On multi-GPU systems the monitor shows one preferred reading, not separate per-adapter temperatures.
 
-Sensor matching accepts numbered CPU packages/cores, CPU die/diode/PECI labels, GPU edge/junction labels, and explicitly labelled iGPU/dGPU board sensors. Memory, VRM, thermal limits, and distance-to-TjMax readings are excluded. A device that fails to update no longer prevents other devices from reporting temperatures.
+Memory, VRM, thermal limits, and distance-to-TjMax readings are excluded. A provider that fails to initialize no longer prevents the remaining providers from reporting temperatures.
 
 When a reading is unavailable, **Enable sensor access** applies pending settings and requests Windows UAC permission. The current monitor stays running until an elevated copy validates the handoff; cancellation or launch failure leaves it open. The new copy reloads your settings and opens Temperatures. Use the same Windows account when approving UAC.
 
-Some CPU readings also require the signed PawnIO driver. Elevation does not install a missing driver or disable Windows security protections. Unknown readings show N/A on this page; taskbar estimates remain marked with `~`. Automatic updates pause in elevated sessions so the temporary PowerShell updater never runs with administrator rights; normal launches resume update checks.
+Direct CPU access may still need a vendor driver or an external monitoring program. Elevation does not install a missing driver or disable Windows security protections. Unknown readings show N/A on this page; taskbar estimates remain marked with `~`. Automatic updates pause in elevated sessions so the temporary PowerShell updater never runs with administrator rights; normal launches resume update checks.
 
-The .NET Framework 4.7.2+ runtime is required (included on current Windows releases). Bundled files are extracted automatically to a content-addressed cache under `%LOCALAPPDATA%\TaskbarMonitor\Sensors`; their bytes are checked against the embedded resources before loading. The managed runtime increases memory usage compared with the native-only monitor. Upstream licenses and source links are embedded and available in the license dialog and **Source and licenses**.
+The .NET Framework 4.7.2+ runtime is required (included on current Windows releases). The embedded bridge and license notice are extracted automatically to a content-addressed cache under `%LOCALAPPDATA%\TaskbarMonitor\Sensors`; their bytes are checked against the embedded resources before loading. The managed runtime increases memory usage compared with the native-only monitor.
 
 ### Additional temperature sources
 
-Missing built-in readings automatically fall back to:
+The built-in engine and its optional fallbacks cover:
 
-- **Intel IGCL temperature sensors:** GPU sensor enumeration, independent of the
-  power-telemetry temperature field already used by LibreHardwareMonitor.
+- **NVIDIA NVML:** GPU core temperature from an installed NVIDIA driver.
+- **AMD ADL:** GPU temperature from an installed AMD driver.
+- **Intel IGCL temperature sensors:** standalone ControlLib GPU sensor enumeration.
 - **Intel Level Zero Sysman:** GPU-specific sensors when an installed `ze_loader.dll`
   and graphics driver support standalone Sysman.
 - **HWiNFO shared memory:** enable Shared Memory Support in a running HWiNFO.
@@ -81,17 +83,22 @@ Missing built-in readings automatically fall back to:
   Applications → Enable shared memory in a running AIDA64.
 - **LibreHardwareMonitor / OpenHardwareMonitor WMI:** reads an available running
   monitor's CPU/GPU temperature provider.
+- **Acer NitroSense telemetry:** subscribes to NitroSense loopback MQTT broker on
+  port 15150 while NitroSense's monitoring UI is open. Covers missing CPU and GPU readings, checks message
+  freshness, and accepts only the pinned local `CN=localhost` certificate. Set a DWORD
+  named `NitroSenseMqttPort` under `HKCU\Software\TaskbarMonitor` if another NitroSense
+  build uses a different port.
 
 Settings → Temperatures identifies the selected source. External programs are optional,
-not bundled or started automatically. Optional fallbacks run every five seconds on the
-sensor worker, not the UI thread. Intel APIs require a compatible 64-bit runtime and
+not bundled or started automatically. Probe-based fallbacks run every five seconds on the
+sensor worker, not the UI thread. NitroSense publishes telemetry only while its
+monitoring UI is open, about every ten seconds. Intel APIs require a compatible 64-bit runtime and
 driver. Unsupported sensors stay unavailable; CPU package temperature is never used
 as GPU temperature. With multiple GPUs, additional fallbacks select the hottest valid
 GPU sensor, excluding memory and thermal-limit readings.
 
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_temperature_device.ps1`
-to capture live readings and Intel API availability (defaults to `build-compat/sensors`).
-Run from an elevated PowerShell to compare protected sensor access.
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_temperature_device.ps1 -SensorDirectory build/sensors`
+to capture live readings and vendor API availability.
 On Lenovo 82KA / Intel UHD i3-1115G4, HWiNFO's **CPU GT Cores** sensor was verified
 as a measured GPU source. Keep HWiNFO running with shared memory enabled; closing
 it removes this fallback.
@@ -132,7 +139,7 @@ Toggle metrics on or off. Set the target drive letter for storage monitoring and
 - Click-Through Mode: Sets WS_EX_TRANSPARENT so mouse clicks pass directly to the taskbar.
 
 ### Temperatures
-- Built-in LibreHardwareMonitor, live hardware status, sensor refresh, and one-click use of detected readings. No external sensor setup.
+- Built-in sensor engine, live hardware status, sensor refresh, and one-click use of detected readings. No external sensor setup.
 - Settings-save errors are reported without closing the settings window; some registry values may already have been written, so retry after fixing permissions.
 
 ## Tray Menu
@@ -151,7 +158,7 @@ Right-click the notification icon in the system tray:
 - Windows SDK
 - C++17 support
 - .NET Framework 4.7.2+ and its C# compiler (included with the Framework)
-- First build: internet access to fetch the pinned, SHA-256-verified LibreHardwareMonitor archive and upstream notices. End users do not need this download.
+- No internet access or third-party sensor archive is needed to build the embedded engine.
 
 ### Build with Batch File (MinGW)
 Runs windres, builds TaskbarMonitor.exe with g++, and self-signs the binary:
@@ -188,12 +195,13 @@ ctest --output-on-failure -C Release
 - advapi32
 
 ### Optional Runtime Libraries
-These are loaded dynamically via LoadLibraryW when present:
-- nvml.dll: NVIDIA Management Library (temperature)
-- nvapi64.dll or nvapi.dll: NVIDIA API fallback
-- atiadlxx.dll or atiadlxy.dll: AMD Display Library (temperature)
+These are used when the installed driver provides them:
+- nvml.dll: NVIDIA Management Library (GPU temperature)
+- atiadlxx.dll: AMD Display Library (GPU temperature)
+- ControlLib.dll: Intel Graphics Control Library (GPU temperature)
+- ze_loader.dll: Intel Level Zero Sysman (GPU temperature)
 
-If neither the embedded backend nor native sensors provide a reading, temperature falls back to a load-based estimate marked with `~`.
+If neither the embedded engine nor optional providers give a reading, temperature falls back to a load-based estimate marked with `~`.
 
 ## Configuration & Uninstallation
 
@@ -214,4 +222,4 @@ The ZIP contains exactly `TaskbarMonitor/TaskbarMonitor.exe` using forward slash
 
 ## License
 
-TaskbarMonitor is MIT licensed. The embedded LibreHardwareMonitor library is MPL 2.0; its dependencies retain their upstream licenses. Full notices and source links are included in the executable's license dialog and extracted sensor cache.
+TaskbarMonitor is MIT licensed. The embedded sensor engine does not bundle a third-party sensor library; license notices are included in the executable's license dialog and extracted sensor cache.

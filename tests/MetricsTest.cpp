@@ -51,6 +51,11 @@ static HardwareSensorStatus FakeHardwareRead() {
     status.gpuSource = L"GPU Core";
     if (sensorScenario == 1) status.temperatures.cpu = 93;
     if (sensorScenario == 2) { status.temperatures.cpu = -1; status.cpuSource.clear(); }
+    if (sensorScenario == 3) {
+        status.temperatures.cpu = 81.4;
+        status.temperatures.gpu = 60.5;
+        status.cpuSource = status.gpuSource = L"Acer NitroSense telemetry";
+    }
     return status;
 }
 static void FakeHardwareClose() {}
@@ -275,6 +280,13 @@ int main() {
         WaitFor([&] { return elevationRequests == 1; });
         assert(IsWindow(g_hSettingsWnd)); // The button requests a handoff, never kills the UI itself.
     }
+    sensorScenario = 3;
+    assert(RequestHardwareSensorRefresh());
+    WaitFor([&] { return GetLatestMetrics().cpuTemp == 81.4; });
+    assert(!GetLatestMetrics().cpuTempEstimated && !GetLatestMetrics().gpuTempEstimated);
+    RefreshHardwareSensorStatus();
+    GetDlgItemTextW(g_hSettingsWnd, 1126, text, _countof(text));
+    assert(wcsstr(text, L"Acer NitroSense telemetry") && wcsstr(text, L"NitroSense telemetry covers sensors"));
     for (int i = 0; i < 32; ++i) assert(RequestHardwareSensorRefresh());
     WaitFor([&] { return GetHardwareSensorStatus().checked; });
     assert(samples > 0);
