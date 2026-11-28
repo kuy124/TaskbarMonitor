@@ -8,7 +8,7 @@ set(SENSOR_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/sensors")
 add_custom_command(OUTPUT "${SENSOR_DIRECTORY}/EmbeddedSensors.rc"
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_sensors.ps1" -Output "${SENSOR_DIRECTORY}"
-    DEPENDS tools/build_sensors.ps1 src/SensorBridge.cs src/AdditionalSensors.cs
+    DEPENDS tools/build_sensors.ps1 src/SensorBridge.cs src/HardwareEngine.cs src/IntelGtTemperature.cs src/AdditionalSensors.cs
     VERBATIM)
 add_custom_target(SensorBundle DEPENDS "${SENSOR_DIRECTORY}/EmbeddedSensors.rc")
 include_directories("${SENSOR_DIRECTORY}")
@@ -115,7 +115,7 @@ if (BUILD_TESTING)
         target_compile_options(TaskbarStartupTest PRIVATE -UNDEBUG)
     endif()
     add_test(NAME TaskbarStartupTest COMMAND TaskbarStartupTest)
-    add_executable(MetricsTest tests/MetricsTest.cpp src/HardwareSensors.cpp src/SensorResources.rc src/SettingsWindow.cpp src/Theme.cpp src/Elevation.cpp)
+    add_executable(MetricsTest tests/MetricsTest.cpp src/HardwareSensors.cpp src/SensorResources.rc src/SettingsWindow.cpp src/StartupDialog.cpp src/Theme.cpp src/Elevation.cpp)
     add_dependencies(MetricsTest SensorBundle)
     set_property(SOURCE src/SensorResources.rc APPEND PROPERTY OBJECT_DEPENDS "${SENSOR_DIRECTORY}/EmbeddedSensors.rc")
     target_include_directories(MetricsTest PRIVATE src)

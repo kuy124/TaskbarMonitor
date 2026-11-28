@@ -1,4 +1,5 @@
 #include "Elevation.h"
+#include "HardwareSensors.h"
 #include <shlobj.h>
 #include <cerrno>
 #include <string>
@@ -41,8 +42,10 @@ void CancelElevatedRestart() {
     requestOwner = NULL;
 }
 
-bool RequestElevatedRestart(HWND owner, HWND host) {
-    if (IsProcessElevated() || ElevationRestartPending()) return false;
+bool RequestElevatedRestart(HWND settingsWindow, HWND host, bool installCpuDriver) {
+    bool elevated = IsProcessElevated();
+    if ((elevated && !installCpuDriver) || ElevationRestartPending()) return false;
+    HWND owner = settingsWindow ? settingsWindow : host;
     wchar_t executable[MAX_PATH], nonce[40];
     DWORD length = GetModuleFileNameW(NULL, executable, _countof(executable));
     GUID id;
@@ -52,11 +55,13 @@ bool RequestElevatedRestart(HWND owner, HWND host) {
     readyEvent = CreateEventW(NULL, TRUE, FALSE, name.c_str());
     if (!readyEvent || GetLastError() == ERROR_ALREADY_EXISTS) { CancelElevatedRestart(); return false; }
     std::wstring arguments = L"--elevated-handoff " + std::to_wstring(GetCurrentProcessId()) +
-                             L" " + nonce + L" --settings --temperatures --autostart";
+                             L" " + nonce + L" --autostart";
+    if (settingsWindow) arguments += L" --settings --temperatures";
+    if (installCpuDriver) arguments += L" --install-cpu-driver";
     SHELLEXECUTEINFOW launch = { sizeof(launch) };
     launch.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
     launch.hwnd = owner;
-    launch.lpVerb = L"runas";
+    launch.lpVerb = elevated ? L"open" : L"runas";
     launch.lpFile = executable;
     launch.lpParameters = arguments.c_str();
     launch.nShow = SW_SHOWNORMAL;
@@ -72,6 +77,21 @@ bool RequestElevatedRestart(HWND owner, HWND host) {
     requestStarted = GetTickCount64();
     if (!SetTimer(host, TIMER_ELEVATION, 100, NULL)) { CancelElevatedRestart(); return false; }
     return true;
+}
+
+void CompleteSensorAccessRequest(SensorAccessRequest& request, HWND host, const HardwareSensorStatus& status,
+                                bool missingCpu, bool missingGpu) {
+    if (request == SensorAccessRequest::None) return;
+    if ((missingCpu || missingGpu) && !status.checked) return;
+    bool installApproved = request == SensorAccessRequest::JustApproved;
+    request = SensorAccessRequest::None; // UAC pumps window messages; consume this attempt before opening a dialog.
+    bool driverCanHelp = (missingCpu && status.temperatures.cpu < 0 && status.directCpuSupported) ||
+                         (missingGpu && status.temperatures.gpu < 0 && status.driverGpuSupported);
+    if (!status.running || !driverCanHelp || (status.driverInstalled && status.administrator)) return;
+    if (!status.driverInstalled && !installApproved &&
+        MessageBoxW(host, L"Install the signed PawnIO driver to read your hardware temperatures?",
+                    L"TaskbarMonitor temperatures", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES) return;
+    RequestElevatedRestart(NULL, host, !status.driverInstalled);
 }
 
 void PollElevatedRestart(HWND host) {
@@ -90,17 +110,20 @@ void PollElevatedRestart(HWND host) {
     }
 }
 
-bool AcceptElevatedRestart(bool& requested) {
+bool AcceptElevatedRestart(bool& requested, bool& installCpuDriver) {
     requested = false;
+    installCpuDriver = false;
     int count = 0;
     LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!arguments) return false;
     int handoff = -1;
+    bool installRequested = false;
     for (int i = 1; i < count; ++i) {
         if (wcscmp(arguments[i], L"--elevated-handoff") == 0) {
             if (handoff != -1) { LocalFree(arguments); return false; }
             handoff = i;
         }
+        if (wcscmp(arguments[i], L"--install-cpu-driver") == 0) installRequested = true;
     }
     if (handoff == -1) { LocalFree(arguments); return true; }
     requested = true;
@@ -127,5 +150,6 @@ bool AcceptElevatedRestart(bool& requested) {
     bool accepted = ready && SetEvent(ready) && WaitForSingleObject(parent, 30000) == WAIT_OBJECT_0;
     if (ready) CloseHandle(ready);
     CloseHandle(parent);
+    installCpuDriver = accepted && installRequested;
     return accepted;
 }

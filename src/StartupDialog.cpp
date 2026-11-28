@@ -1,6 +1,20 @@
 #include "StartupDialog.h"
 #include "Resource.h"
 
+bool AskForTemperatureChoice(HWND owner) {
+    if (g_config.temperatureChoiceMade) return false;
+    int answer = MessageBoxW(owner,
+        L"Use hardware sensors to measure CPU and GPU temperatures?\n\n"
+        L"Yes: Use measured readings. If needed, TaskbarMonitor will request administrator access and install the signed PawnIO sensor driver.\n"
+        L"No: Show load-based estimates, marked with ~.\n\n"
+        L"You can change this in Settings > Temperatures. Cancel to decide next time.",
+        L"TaskbarMonitor temperatures", MB_YESNOCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND |
+        (g_config.useLibreHardware ? MB_DEFBUTTON1 : MB_DEFBUTTON2));
+    if (answer == IDYES || answer == IDNO) SaveTemperatureChoice(answer == IDYES, owner);
+    else g_config.useLibreHardware = false;
+    return answer == IDYES;
+}
+
 #define IDC_STARTUP_BODY       1601
 #define IDC_STARTUP_STATUS     1602
 #define IDC_STARTUP_ENABLE     1603

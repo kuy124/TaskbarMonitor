@@ -229,6 +229,7 @@ namespace TaskbarMonitor.Sensors
         internal static void Apply(ref double cpu, ref double gpu, ref int cpuSource, ref int gpuSource)
         {
             EnsureStarted();
+            if (Interlocked.CompareExchange(ref stop, 0, 0) != 0) return;
             double detectedCpu, detectedGpu;
             DateTime updated;
             lock (Sync)
@@ -254,7 +255,6 @@ namespace TaskbarMonitor.Sensors
             {
                 try { thread.Join(200); } catch (Exception) { }
             }
-            Interlocked.Exchange(ref started, 0);
         }
 
         private static bool ValidTemperature(double value)
@@ -292,6 +292,8 @@ namespace TaskbarMonitor.Sensors
                 for (int elapsed = 0; elapsed < backoff && Interlocked.CompareExchange(ref stop, 0, 0) == 0; elapsed += 250)
                     Thread.Sleep(250);
             }
+            lock (Sync) { cachedCpu = cachedGpu = -1; lastUpdate = DateTime.MinValue; }
+            Interlocked.Exchange(ref started, 0);
         }
 
         private static void Listen()

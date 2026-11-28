@@ -406,12 +406,20 @@ static void RefreshAutostartControls(HWND hWnd, bool updateCheckboxAndSnapshot) 
     EnableWindow(hCheckbox, !info.isPolicyManaged);
 }
 
+static bool NeedsCpuDriver(const HardwareSensorStatus& status) {
+    return status.running && status.directCpuSupported && !status.driverInstalled;
+}
+
 static void UpdateSensorStatus(HWND hWnd) {
     HardwareSensorStatus status = GetHardwareSensorStatus();
     wchar_t text[512];
-    bool usable = status.checked && status.running &&
+    bool sensorsEnabled = g_config.useLibreHardware;
+    bool usable = sensorsEnabled && status.checked && status.running &&
                   (status.temperatures.cpu >= 0 || status.temperatures.gpu >= 0);
-    if (!status.checked) {
+    if (!sensorsEnabled) {
+        s_sensorCheckPending = false;
+        wcscpy_s(text, L"Using estimates (~). To measure temperatures, select Use built-in hardware sensors and click Apply.");
+    } else if (!status.checked) {
         wcscpy_s(text, s_sensorCheckPending ? L"Reading built-in hardware sensors..."
                                          : L"The built-in sensor engine starts automatically.");
     } else {
@@ -421,14 +429,16 @@ static void UpdateSensorStatus(HWND hWnd) {
             FormatTemperature(status.temperatures.cpu, false, cpu, _countof(cpu));
             FormatTemperature(status.temperatures.gpu, false, gpu, _countof(gpu));
             const wchar_t* detail = L"Measured readings; ~ marks a load-based estimate.";
-            if (status.cpuSource == L"Acer NitroSense telemetry" || status.gpuSource == L"Acer NitroSense telemetry")
-                detail = L"NitroSense telemetry covers sensors Windows cannot expose; ~ marks an estimate.";
-            else if (status.temperatures.cpu < 0 && !status.driverInstalled)
-                detail = L"CPU hardware access needs a vendor sensor API, or open NitroSense monitoring UI for telemetry.";
-            else if (status.temperatures.cpu < 0 && !status.administrator)
-                detail = L"Enable sensor access applies settings, then requests UAC.";
-            else if (status.temperatures.cpu >= 90)
+            if (status.temperatures.cpu >= 90)
                 detail = L"Measured CPU is 90+ C. Verify cooling; this is not an estimate.";
+            else if (NeedsCpuDriver(status))
+                detail = L"Install the signed driver for direct readings.";
+            else if (status.cpuSource == L"Acer NitroSense telemetry" || status.gpuSource == L"Acer NitroSense telemetry")
+                detail = L"NitroSense telemetry covers sensors Windows cannot expose; ~ marks an estimate.";
+            else if (!status.administrator && (status.temperatures.cpu < 0 || (status.driverInstalled && !status.directCpu)))
+                detail = L"Enable sensor access applies settings, then requests UAC.";
+            else if (status.temperatures.cpu < 0)
+                detail = L"This system did not expose a CPU reading.";
             swprintf(text, _countof(text), L"CPU %ls (%ls)\nGPU %ls (%ls)\n%ls", cpu,
                      status.cpuSource.empty() ? L"sensor unavailable" : status.cpuSource.c_str(), gpu,
                      status.gpuSource.empty() ? L"sensor unavailable" : status.gpuSource.c_str(), detail);
@@ -442,12 +452,17 @@ static void UpdateSensorStatus(HWND hWnd) {
     HWND elevation = GetDlgItem(hWnd, IDC_BTN_SENSOR_ELEVATE);
     bool elevated = IsProcessElevated();
     bool pending = ElevationRestartPending();
-    EnableWindow(elevation, !elevated && !pending &&
-                 (status.temperatures.cpu < 0 || status.temperatures.gpu < 0));
-    SetWindowTextW(elevation, elevated ? L"Administrator access enabled"
-                                    : pending ? L"Restarting with permission..." : L"Enable sensor access");
+    bool installDriver = NeedsCpuDriver(status);
+    bool missing = status.temperatures.cpu < 0 || status.temperatures.gpu < 0 ||
+                   (status.driverInstalled && !status.directCpu);
+    EnableWindow(elevation, sensorsEnabled && status.checked && !pending && (installDriver || (!elevated && missing)));
+    const wchar_t* action = L"Enable sensor access";
+    if (pending) action = L"Restarting with permission...";
+    else if (installDriver) action = L"Install sensor driver";
+    else if (elevated) action = L"Administrator access enabled";
+    SetWindowTextW(elevation, action);
     SendMessageW(elevation, BCM_SETSHIELD, 0, !elevated);
-    EnableWindow(GetDlgItem(hWnd, IDC_BTN_SENSOR_TEST), !s_sensorCheckPending);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_SENSOR_TEST), sensorsEnabled && !s_sensorCheckPending);
 }
 
 void RefreshHardwareSensorStatus() {
@@ -458,6 +473,10 @@ void ShowTemperatureSettings() {
     if (g_hSettingsWnd && IsWindow(g_hSettingsWnd)) {
         g_currentTab = 5;
         ShowTabControls(g_hSettingsWnd, 5);
+        if (g_config.useLibreHardware && !GetHardwareSensorStatus().checked) {
+            s_sensorCheckPending = RequestHardwareSensorRefresh();
+            UpdateSensorStatus(g_hSettingsWnd);
+        }
         InvalidateRect(g_hSettingsWnd, NULL, TRUE);
     }
 }
@@ -481,6 +500,7 @@ static bool ApplyCurrentSettings(HWND hWnd) {
     g_config.autoContrast    = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOCONTRAST) == BST_CHECKED);
     g_config.clickThrough    = (IsDlgButtonChecked(hWnd, IDC_CHK_CLICKTHROUGH) == BST_CHECKED);
     g_config.useLibreHardware = (IsDlgButtonChecked(hWnd, IDC_CHK_HARDWARE_SENSORS) == BST_CHECKED);
+    if (previous.useLibreHardware != g_config.useLibreHardware) g_config.temperatureChoiceMade = true;
     g_config.settingsTheme = g_settingsThemeMode;
     g_config.autoUpdate = (IsDlgButtonChecked(hWnd, IDC_CHK_AUTOUPDATE) == BST_CHECKED);
 
@@ -1052,8 +1072,9 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
             return 0;
         }
         if (id == IDC_BTN_SENSOR_ELEVATE) {
-            if (IsWindowEnabled(GetDlgItem(hWnd, id)) && ApplyCurrentSettings(hWnd))
-                PostMessageW(g_hOwnerWnd, WM_REQUEST_ELEVATION, 0, 0);
+            bool installDriver = NeedsCpuDriver(GetHardwareSensorStatus());
+            if (IsWindowEnabled(GetDlgItem(hWnd, id)) && ApplyCurrentSettings(hWnd) && g_config.useLibreHardware)
+                PostMessageW(g_hOwnerWnd, WM_REQUEST_ELEVATION, installDriver, 0);
             return 0;
         }
 
@@ -1090,6 +1111,8 @@ static LRESULT CALLBACK SettingsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
         else if (id == IDC_BTN_DEFAULTS) {
             MonitorConfig saved = g_config;
             SetDefaults();
+            g_config.useLibreHardware = saved.useLibreHardware;
+            g_config.temperatureChoiceMade = saved.temperatureChoiceMade;
             DestroyWindow(hWnd);
             OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(g_hOwnerWnd, GWLP_HINSTANCE), g_hOwnerWnd);
             g_config = saved;

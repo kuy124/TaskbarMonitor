@@ -13,6 +13,10 @@ struct HardwareSensorStatus {
     bool running = false;
     bool driverInstalled = false;
     bool administrator = false;
+    bool directCpuSupported = false;
+    bool driverGpuSupported = false;
+    bool directCpu = false;
+    bool directGpu = false;
     HRESULT error = S_OK;
     std::wstring noticesPath;
     std::wstring cpuSource;
@@ -20,5 +24,6 @@ struct HardwareSensorStatus {
 };
 
 HardwareSensorStatus ReadHardwareTemperatures();
+HRESULT InstallCpuSensorDriver();
 void CloseHardwareSensors();
 bool CheckEmbeddedSensorBridge();

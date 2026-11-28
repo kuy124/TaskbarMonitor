@@ -15,11 +15,24 @@
 HWND g_hWnd = NULL;
 static HWND g_hHostWnd = NULL;
 static bool g_initialized = false;
+static bool g_deferredTemperatureChoice = false;
+static SensorAccessRequest g_sensorAccessRequest = SensorAccessRequest::None;
 UINT g_uTaskbarCreatedMsg = 0;
 NOTIFYICONDATAW g_nid = { sizeof(NOTIFYICONDATAW) };
 
 static void CreateMonitorWindow(HINSTANCE hInstance);
 static void RefreshTrayTooltip();
+static void OpenUserSettings(HWND owner) {
+    if (g_deferredTemperatureChoice) {
+        g_deferredTemperatureChoice = false;
+        bool choseSensors = AskForTemperatureChoice(g_hHostWnd);
+        if (choseSensors) g_sensorAccessRequest = SensorAccessRequest::JustApproved;
+        UpdateAllMetrics();
+        if (choseSensors) return;
+    }
+    OpenSettingsWindow((HINSTANCE)GetWindowLongPtrW(owner, GWLP_HINSTANCE), owner);
+}
+
 static void RecoverMonitorWindow() {
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", NULL);
     if (!taskbar) return;
@@ -68,6 +81,13 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         RefreshTrayTooltip();
         RefreshHardwareSensorStatus();
         if (g_hWnd && IsWindow(g_hWnd)) InvalidateRect(g_hWnd, NULL, FALSE);
+        if (g_sensorAccessRequest != SensorAccessRequest::None) {
+            bool missingCpu = g_config.useLibreHardware && g_config.showCPUTemp &&
+                              (g_metrics.cpuTemp < 0 || g_metrics.cpuTempEstimated);
+            bool missingGpu = g_config.useLibreHardware && g_config.showGPUTemp &&
+                              (g_metrics.gpuTemp < 0 || g_metrics.gpuTempEstimated);
+            CompleteSensorAccessRequest(g_sensorAccessRequest, hWnd, GetHardwareSensorStatus(), missingCpu, missingGpu);
+        }
         return 0;
     case WM_TRAYICON:
         RecoverMonitorWindow();
@@ -99,11 +119,10 @@ static void RefreshTrayTooltip() {
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_REQUEST_ELEVATION:
-        RequestElevatedRestart(g_hSettingsWnd, g_hHostWnd);
+        if (g_config.useLibreHardware) RequestElevatedRestart(g_hSettingsWnd, g_hHostWnd, wParam != 0);
         RefreshHardwareSensorStatus();
         return 0;
     case WM_CREATE: {
-        if (!g_initialized) LoadConfig();
         LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
         if (g_config.clickThrough) exStyle |= WS_EX_TRANSPARENT;
         else exStyle &= ~WS_EX_TRANSPARENT;
@@ -130,7 +149,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONDBLCLK:
     case WM_LBUTTONDOWN:
         if (!g_config.clickThrough) {
-            OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
+            OpenUserSettings(hWnd);
         }
         break;
 
@@ -151,7 +170,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DestroyMenu(hMenu);
 
             if (cmd == ID_TRAY_SETTINGS) {
-                OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
+                OpenUserSettings(hWnd);
             } else if (cmd == ID_TRAY_TASKMGR) {
                 ShellExecuteW(NULL, L"open", L"taskmgr.exe", NULL, NULL, SW_SHOW);
             } else if (cmd == ID_TRAY_REFRESH) {
@@ -170,7 +189,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DestroyWindow(g_hHostWnd);
             }
         } else if (lParam == WM_LBUTTONDBLCLK) {
-            OpenSettingsWindow((HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE), hWnd);
+            OpenUserSettings(hWnd);
         }
         break;
     }
@@ -245,9 +264,10 @@ static void CreateMonitorWindow(HINSTANCE hInstance) {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     bool elevatedRestart = false;
+    bool installCpuDriver = false;
     // Never load elevated native sensor DLLs from a writable application folder or PATH.
     if (IsProcessElevated() && !SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)) return 1;
-    if (!AcceptElevatedRestart(elevatedRestart)) return 1;
+    if (!AcceptElevatedRestart(elevatedRestart, installCpuDriver)) return 1;
     HANDLE instanceMutex = CreateMutexW(NULL, FALSE, L"Local\\TaskbarMonitor.SingleInstance");
     if (!instanceMutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -260,6 +280,37 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
 
     if (!ShowLicenseDialog(hInstance)) {
         return 0;
+    }
+    LoadConfig();
+    bool openSettings = pCmdLine && wcsstr(pCmdLine, L"--settings");
+    bool bAutoStart = pCmdLine && wcsstr(pCmdLine, L"--autostart");
+    if (!openSettings && !bAutoStart) {
+        AutostartInfo autostartInfo = QueryAutostartStatus();
+        if (autostartInfo.status != AUTOSTART_ENABLED) {
+            ShowAutostartDialog(hInstance, NULL, autostartInfo);
+            g_config.runAtStartup = IsAutostartEnabled();
+        }
+    }
+    if (elevatedRestart && !g_config.temperatureChoiceMade) {
+        // A verified sensor handoff also carries an opt-in that could only be saved for this session.
+        g_config.temperatureChoiceMade = g_config.useLibreHardware = true;
+    }
+    g_deferredTemperatureChoice = bAutoStart && !openSettings && !g_config.temperatureChoiceMade;
+    if (g_deferredTemperatureChoice) g_config.useLibreHardware = false;
+    bool choseSensors = !elevatedRestart && !g_deferredTemperatureChoice && AskForTemperatureChoice(NULL);
+    if (choseSensors) g_sensorAccessRequest = SensorAccessRequest::JustApproved;
+    else if (!bAutoStart && !openSettings && !elevatedRestart && g_config.useLibreHardware)
+        g_sensorAccessRequest = SensorAccessRequest::SavedChoice;
+    if (installCpuDriver && g_config.useLibreHardware) {
+        HRESULT result = InstallCpuSensorDriver();
+        if (result == HRESULT_FROM_WIN32(ERROR_SUCCESS_REBOOT_REQUIRED))
+            MessageBoxW(NULL, L"Restart Windows to finish enabling direct CPU temperatures.", L"TaskbarMonitor", MB_OK | MB_ICONINFORMATION);
+        else if (FAILED(result)) {
+            wchar_t text[160];
+            swprintf(text, _countof(text), L"Could not install the CPU sensor driver (0x%08lX). Temperature fallbacks are still available.",
+                     static_cast<unsigned long>(result));
+            MessageBoxW(NULL, text, L"TaskbarMonitor", MB_OK | MB_ICONWARNING);
+        }
     }
 
     g_uTaskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
@@ -308,17 +359,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     CheckForUpdates();
     SetTimer(g_hHostWnd, 4, 24 * 60 * 60 * 1000, NULL);
 
-    bool openSettings = (pCmdLine && wcsstr(pCmdLine, L"--settings") != NULL);
-    bool bAutoStart = (pCmdLine && wcsstr(pCmdLine, L"--autostart") != NULL);
-    if (openSettings) {
+    if (openSettings && !choseSensors) {
         OpenSettingsWindow(hInstance, g_hWnd);
         if (elevatedRestart) ShowTemperatureSettings();
-    } else if (!bAutoStart) {
-        AutostartInfo autostartInfo = QueryAutostartStatus();
-        if (autostartInfo.status != AUTOSTART_ENABLED) {
-            ShowAutostartDialog(hInstance, g_hWnd, autostartInfo);
-            g_config.runAtStartup = IsAutostartEnabled();
-        }
     }
 
     MSG msg;

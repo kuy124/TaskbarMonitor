@@ -1,6 +1,8 @@
 param(
     [string]$SensorDirectory = "$PSScriptRoot/../build-compat/sensors",
-    [string]$OutputPath = "$PSScriptRoot/../build-compat/temperature-device.txt"
+    [string]$OutputPath = "$PSScriptRoot/../build-compat/temperature-device.txt",
+    [switch]$RequireDirectCpu,
+    [switch]$RequireDirectGpu
 )
 $ErrorActionPreference = 'Stop'
 $report = [Collections.Generic.List[string]]::new()
@@ -10,7 +12,8 @@ try {
     [Reflection.Assembly]::LoadFrom("$directory/TaskbarMonitor.Sensors.dll") | Out-Null
     [TaskbarMonitor.Sensors.Bootstrap]::Initialize($directory) | Out-Null
     Record "Date: $(Get-Date -Format o)"
-    Record "64-bit: $([Environment]::Is64BitProcess); backend status: $([TaskbarMonitor.Sensors.Bootstrap]::Status('')) (bit 1 native sensor API, bit 2 administrator)"
+    Record "64-bit: $([Environment]::Is64BitProcess)"
+    Get-CimInstance Win32_Processor | ForEach-Object { Record "CPU: $($_.Name)" }
     Get-CimInstance Win32_VideoController | ForEach-Object { Record "GPU: $($_.Name); driver: $($_.DriverVersion)" }
     $assembly = [TaskbarMonitor.Sensors.Bootstrap].Assembly
     $extra = $assembly.GetType('TaskbarMonitor.Sensors.AdditionalSensors')
@@ -40,18 +43,38 @@ try {
             Record "${method}: value=$($arguments[0]); source=$($arguments[1])"
         } catch { Record "${method}: $($_.Exception.GetBaseException().Message)" }
     }
-    foreach ($method in @('WddmGpu', 'IntelGpu', 'SysmanGpu', 'NvmlGpu', 'AdlGpu')) {
+    foreach ($method in @('WddmGpu', 'IntelGpu', 'SysmanGpu', 'NvmlGpu', 'EmbeddedGpu')) {
         try {
             $arguments = [object[]]@([double]-1, [int]0)
             $engine.GetMethod($method, $flags).Invoke($null, $arguments) | Out-Null
             Record "${method}: value=$($arguments[0]); source=$($arguments[1])"
         } catch { Record "${method}: $($_.Exception.GetBaseException().Message)" }
     }
+    $directCpuSamples = 0
+    $directGpuSamples = 0
     for ($sample = 0; $sample -lt 12; ++$sample) {
         $packed = [TaskbarMonitor.Sensors.Bootstrap]::Read('')
-        Record "Sample ${sample}: CPU tenths=$($packed -band 65535); GPU tenths=$(($packed -shr 16) -band 65535); sources=$([TaskbarMonitor.Sensors.Bootstrap]::Sources('')) (65535=unavailable)"
+        $sources = [TaskbarMonitor.Sensors.Bootstrap]::Sources('')
+        $cpuSource = $sources -band 255
+        $cpu = $packed -band 65535
+        $gpuSource = $sources -shr 8
+        $gpu = ($packed -shr 16) -band 65535
+        if ($cpu -gt 0 -and $cpu -le 1500 -and $cpuSource -ge 1 -and $cpuSource -le 5) {
+            ++$directCpuSamples
+        }
+        if ($gpu -gt 0 -and $gpu -le 1500 -and ($gpuSource -in 1,2,3,4,5,6,11,12,15)) {
+            ++$directGpuSamples
+        }
+        Record "Sample ${sample}: CPU tenths=$cpu; GPU tenths=$gpu; sources=$sources (65535=unavailable)"
         Start-Sleep -Seconds 1
     }
+    if ($RequireDirectCpu -and $directCpuSamples -lt 2) {
+        throw "Expected repeated direct CPU temperature readings; got $directCpuSamples."
+    }
+    if ($RequireDirectGpu -and $directGpuSamples -lt 2) {
+        throw "Expected repeated direct GPU temperature readings; got $directGpuSamples."
+    }
+    Record "Backend status: $([TaskbarMonitor.Sensors.Bootstrap]::Status('')) (1 driver installed, 2 administrator, 4 direct CPU supported, 8 Intel GT sensor supported)"
     Record "NitroSense telemetry: CPU=$($telemetry.GetField('cachedCpu', $flags).GetValue($null)); GPU=$($telemetry.GetField('cachedGpu', $flags).GetValue($null)); updated=$($telemetry.GetField('lastUpdate', $flags).GetValue($null))"
     Record "NitroSense certificate: $($telemetry.GetField('certificateError', $flags).GetValue($null))"
     Record "NitroSense last error: $($telemetry.GetField('lastError', $flags).GetValue($null))"

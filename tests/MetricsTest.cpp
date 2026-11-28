@@ -2,6 +2,7 @@
 #include "Metrics.h"
 #include "GpuUsage.h"
 #include "SettingsWindow.h"
+#include "StartupDialog.h"
 #include "TaskbarSync.h"
 #include "Elevation.h"
 #include <atomic>
@@ -15,6 +16,7 @@ static LONG createError = ERROR_SUCCESS;
 static const wchar_t* failedValue = nullptr;
 static int writes = 0, warnings = 0;
 static DWORD savedHardware = 0;
+static DWORD savedTemperatureMode = 2;
 static LONG FakeCreateKey(HKEY, LPCWSTR, DWORD, LPWSTR, DWORD, REGSAM, LPSECURITY_ATTRIBUTES, PHKEY key, LPDWORD) {
     writes = 0;
     if (createError == ERROR_SUCCESS) *key = reinterpret_cast<HKEY>(1);
@@ -23,6 +25,7 @@ static LONG FakeCreateKey(HKEY, LPCWSTR, DWORD, LPWSTR, DWORD, REGSAM, LPSECURIT
 static LONG FakeSetValue(HKEY, LPCWSTR name, DWORD, DWORD type, const BYTE* data, DWORD) {
     ++writes;
     if (type == REG_DWORD && wcscmp(name, L"UseLibreHardware") == 0) std::memcpy(&savedHardware, data, sizeof(savedHardware));
+    if (type == REG_DWORD && wcscmp(name, L"TemperatureMode") == 0) std::memcpy(&savedTemperatureMode, data, sizeof(savedTemperatureMode));
     return failedValue && wcscmp(name, failedValue) == 0 ? ERROR_ACCESS_DENIED : ERROR_SUCCESS;
 }
 static LONG FakeCloseKey(HKEY key) { return key == reinterpret_cast<HKEY>(1) ? ERROR_SUCCESS : RegCloseKey(key); }
@@ -56,6 +59,11 @@ static HardwareSensorStatus FakeHardwareRead() {
         status.temperatures.gpu = 60.5;
         status.cpuSource = status.gpuSource = L"Acer NitroSense telemetry";
     }
+    if (sensorScenario == 4) {
+        status.temperatures.cpu = -1;
+        status.cpuSource.clear();
+        status.directCpuSupported = true;
+    }
     return status;
 }
 static void FakeHardwareClose() {}
@@ -77,9 +85,14 @@ static HRSRC FakeUpdateResource(HMODULE, LPCWSTR, LPCWSTR) { ++updateResources; 
 
 HWND g_hWnd = NULL;
 static int elevationRequests = 0;
+static bool driverInstallRequested = false;
 void SyncWithTaskbar(HWND) {}
 static LRESULT CALLBACK HostProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_REQUEST_ELEVATION) { ++elevationRequests; return 0; }
+    if (message == WM_REQUEST_ELEVATION) {
+        ++elevationRequests;
+        driverInstallRequested = wParam != 0;
+        return 0;
+    }
     if (message == WM_METRICS_READY) {
         g_metrics = GetLatestMetrics();
         RefreshHardwareSensorStatus();
@@ -100,6 +113,55 @@ template<class Ready> static void WaitFor(Ready ready) {
 static void Click(HWND button) {
     assert(button);
     SendMessageW(GetParent(button), WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(button), BN_CLICKED), reinterpret_cast<LPARAM>(button));
+}
+
+static int temperatureAnswer = IDCANCEL, temperatureQuestions = 0;
+static LRESULT CALLBACK AnswerTemperatureQuestion(int code, WPARAM window, LPARAM info) {
+    if (code == HCBT_ACTIVATE) {
+        HWND dialog = reinterpret_cast<HWND>(window);
+        if (GetDlgItem(dialog, IDYES) && GetDlgItem(dialog, IDNO)) {
+            ++temperatureQuestions;
+            PostMessageW(dialog, WM_COMMAND, temperatureAnswer, 0);
+        }
+    }
+    return CallNextHookEx(NULL, code, window, info);
+}
+
+static void CheckFirstTemperatureChoice() {
+    wchar_t path[96];
+    swprintf_s(path, L"Software\\TaskbarMonitorChoiceTest-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
+    HKEY root;
+    DWORD disposition;
+    assert(RegCreateKeyExW(HKEY_CURRENT_USER, path, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &root, &disposition) == ERROR_SUCCESS);
+    assert(disposition == REG_CREATED_NEW_KEY && RegOverridePredefKey(HKEY_CURRENT_USER, root) == ERROR_SUCCESS);
+    HHOOK hook = SetWindowsHookExW(WH_CBT, AnswerTemperatureQuestion, NULL, GetCurrentThreadId());
+    assert(hook);
+
+    LoadConfig();
+    assert(!g_config.temperatureChoiceMade && !g_config.useLibreHardware);
+    assert(!AskForTemperatureChoice(NULL)); // Cancel defers; it isn't a saved No.
+    LoadConfig();
+    assert(!g_config.temperatureChoiceMade && temperatureQuestions == 1);
+    DWORD legacy = 1;
+    assert(RegSetKeyValueW(HKEY_CURRENT_USER, CONFIG_REGISTRY_KEY, L"UseLibreHardware", REG_DWORD, &legacy, sizeof(legacy)) == ERROR_SUCCESS);
+    LoadConfig();
+    assert(!g_config.temperatureChoiceMade && g_config.useLibreHardware);
+    for (int answer : {IDNO, IDYES}) {
+        temperatureAnswer = answer;
+        int before = temperatureQuestions;
+        assert(AskForTemperatureChoice(NULL) == (answer == IDYES));
+        LoadConfig();
+        assert(g_config.temperatureChoiceMade && g_config.useLibreHardware == (answer == IDYES));
+        assert(!AskForTemperatureChoice(NULL) && temperatureQuestions == before + 1);
+        if (answer == IDNO) {
+            assert(RegDeleteKeyValueW(HKEY_CURRENT_USER, CONFIG_REGISTRY_KEY, L"TemperatureMode") == ERROR_SUCCESS);
+            LoadConfig();
+        }
+    }
+    UnhookWindowsHookEx(hook);
+    assert(RegOverridePredefKey(HKEY_CURRENT_USER, NULL) == ERROR_SUCCESS);
+    RegCloseKey(root);
+    assert(RegDeleteTreeW(HKEY_CURRENT_USER, path) == ERROR_SUCCESS);
 }
 
 static RECT ChildRect(HWND window, int id) {
@@ -150,9 +212,24 @@ static void CheckTemperatureLayout(HWND window, UINT dpi) {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
     SetProcessDPIAware(); // Match the app: compare physical pixels, not virtualized window rectangles.
     SetDefaults();
+    int nativeGpuReads = 0;
+    sampling::g_config = g_config;
+    sampling::g_config.useLibreHardware = false;
+    sampling::g_nvmlInitialized = true;
+    sampling::g_nvmlDevice = &nativeGpuReads;
+    sampling::g_nvmlDeviceGetTemperature = [](void* device, int, unsigned int* temperature) {
+        ++*static_cast<int*>(device);
+        *temperature = 75;
+        return 0;
+    };
+    sampling::UpdateGPUTemp();
+    assert(nativeGpuReads == 0 && sampling::g_metrics.gpuTempEstimated);
+    sampling::g_nvmlDeviceGetTemperature = nullptr;
+    sampling::g_nvmlInitialized = false;
+    sampling::g_nvmlDevice = nullptr;
     CheckForUpdates();
     assert(updateResources == 0); // Elevated sessions must never execute a writable temporary script.
     updaterElevated = false;
@@ -164,6 +241,17 @@ int main() {
     assert(CheckEmbeddedSensorBridge());
     HardwareSensorStatus real = ReadHardwareTemperatures();
     assert(real.checked && real.running && SUCCEEDED(real.error));
+    if (real.gpuSource == L"Intel GT cores") assert(real.driverGpuSupported && real.driverInstalled);
+    bool requireCpu = argc == 2 && strcmp(argv[1], "--require-direct-cpu") == 0;
+    bool requireGpu = argc == 2 && strcmp(argv[1], "--require-direct-gpu") == 0;
+    if (requireCpu || requireGpu) {
+        std::wprintf(L"CPU %.1f C (%ls)\n", real.temperatures.cpu, real.cpuSource.c_str());
+        std::wprintf(L"GPU %.1f C (%ls)\n", real.temperatures.gpu, real.gpuSource.c_str());
+        CloseHardwareSensors();
+        CoUninitialize();
+        return (!requireCpu || (real.directCpu && real.temperatures.cpu > 0)) &&
+               (!requireGpu || (real.directGpu && real.temperatures.gpu > 0)) ? 0 : 1;
+    }
     assert(!real.noticesPath.empty() && GetFileAttributesW(real.noticesPath.c_str()) != INVALID_FILE_ATTRIBUTES);
     std::wstring cache = real.noticesPath.substr(0, real.noticesPath.find_last_of(L'\\'));
     HANDLE rename = CreateFileW(cache.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -186,7 +274,9 @@ int main() {
     assert(gpu.Usage() == 100);
 
     SetDefaults();
-    assert(g_config.useLibreHardware && SaveConfig() && warnings == 0);
+    assert(!g_config.useLibreHardware && !g_config.temperatureChoiceMade);
+    g_config.useLibreHardware = g_config.temperatureChoiceMade = true;
+    assert(SaveConfig() && warnings == 0);
     int expectedWrites = writes;
     createError = ERROR_ACCESS_DENIED;
     assert(!SaveConfig() && writes == 0 && warnings == 1);
@@ -202,6 +292,9 @@ int main() {
     swprintf(desktopName, _countof(desktopName), L"MetricsCheck-%lu", GetCurrentProcessId());
     HDESK desktop = CreateDesktopW(desktopName, NULL, NULL, 0, GENERIC_ALL, NULL);
     assert(desktop && SetThreadDesktop(desktop));
+    MonitorConfig testConfig = g_config;
+    CheckFirstTemperatureChoice();
+    g_config = testConfig;
     WNDCLASSW wc = {};
     wc.lpfnWndProc = HostProc;
     wc.hInstance = GetModuleHandleW(NULL);
@@ -238,7 +331,7 @@ int main() {
     assert(warnings == 2 && IsWindow(g_hSettingsWnd));
     failedValue = nullptr;
     Click(use);
-    assert(g_config.useLibreHardware && savedHardware == 1 && g_config.showCPUTemp && g_config.showGPUTemp);
+    assert(g_config.useLibreHardware && savedHardware == 1 && savedTemperatureMode == 1 && g_config.showCPUTemp && g_config.showGPUTemp);
     WaitFor([&] { return GetLatestMetrics().cpuTemp == 61.5; });
     assert(!GetLatestMetrics().cpuTempEstimated && !GetLatestMetrics().gpuTempEstimated);
     ShowTemperatureSettings();
@@ -278,7 +371,7 @@ int main() {
         failedValue = nullptr;
         Click(elevate);
         WaitFor([&] { return elevationRequests == 1; });
-        assert(IsWindow(g_hSettingsWnd)); // The button requests a handoff, never kills the UI itself.
+        assert(!driverInstallRequested && IsWindow(g_hSettingsWnd));
     }
     sensorScenario = 3;
     assert(RequestHardwareSensorRefresh());
@@ -287,9 +380,32 @@ int main() {
     RefreshHardwareSensorStatus();
     GetDlgItemTextW(g_hSettingsWnd, 1126, text, _countof(text));
     assert(wcsstr(text, L"Acer NitroSense telemetry") && wcsstr(text, L"NitroSense telemetry covers sensors"));
+    sensorScenario = 4;
+    assert(RequestHardwareSensorRefresh());
+    WaitFor([&] { return GetHardwareSensorStatus().directCpuSupported; });
+    RefreshHardwareSensorStatus();
+    GetWindowTextW(elevate, text, _countof(text));
+    assert(IsWindowEnabled(elevate) && wcscmp(text, L"Install sensor driver") == 0);
+    CheckTemperatureLayout(g_hSettingsWnd, 240);
+    int previousRequests = elevationRequests;
+    Click(elevate);
+    WaitFor([&] { return elevationRequests == previousRequests + 1; });
+    assert(driverInstallRequested);
     for (int i = 0; i < 32; ++i) assert(RequestHardwareSensorRefresh());
     WaitFor([&] { return GetHardwareSensorStatus().checked; });
     assert(samples > 0);
+    CheckDlgButton(g_hSettingsWnd, IDC_CHK_HARDWARE_SENSORS, BST_UNCHECKED);
+    Click(GetDlgItem(g_hSettingsWnd, IDC_BTN_APPLY));
+    WaitFor([&] { return GetLatestMetrics().cpuTempEstimated && GetLatestMetrics().gpuTempEstimated; });
+    RefreshHardwareSensorStatus();
+    assert(!GetHardwareSensorStatus().checked && !RequestHardwareSensorRefresh());
+    assert(!IsWindowEnabled(refresh) && !IsWindowEnabled(elevate));
+    assert(savedTemperatureMode == 0 && savedHardware == 0);
+    sensorScenario = 0;
+    CheckDlgButton(g_hSettingsWnd, IDC_CHK_HARDWARE_SENSORS, BST_CHECKED);
+    Click(GetDlgItem(g_hSettingsWnd, IDC_BTN_APPLY));
+    WaitFor([&] { return GetLatestMetrics().cpuTemp == 61.5 && !GetLatestMetrics().gpuTempEstimated; });
+    assert(savedTemperatureMode == 1 && GetLatestMetrics().gpuTemp == 53);
     CloseSettingsWindow();
     CleanupMetrics(); CleanupMetrics();
     assert(!RequestHardwareSensorRefresh());

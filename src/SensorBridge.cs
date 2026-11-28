@@ -1,11 +1,24 @@
 using System;
+using System.IO;
+using System.Reflection;
 using System.Security.Principal;
 
 namespace TaskbarMonitor.Sensors
 {
     public static class Bootstrap
     {
-        public static int Initialize(string directory) { return 0; }
+        private static bool librariesLoaded;
+        public static int Initialize(string directory)
+        {
+            if (librariesLoaded) return 0;
+            // Load only libraries verified against resources by the native host.
+            foreach (string name in new[] { "System.Buffers.dll", "System.Numerics.Vectors.dll",
+                "System.Runtime.CompilerServices.Unsafe.dll", "System.Memory.dll", "BlackSharp.Core.dll",
+                "HidSharp.dll", "RAMSPDToolkit-NDD.dll", "DiskInfoToolkit.dll", "LibreHardwareMonitorLib.dll" })
+                Assembly.Load(File.ReadAllBytes(Path.Combine(directory, name)));
+            librariesLoaded = true;
+            return 0;
+        }
         public static int Read(string unused) { return Reader.Read(); }
         public static int Sources(string unused) { return Reader.Sources(); }
         public static int Status(string unused) { return Reader.Status(); }
@@ -32,7 +45,7 @@ namespace TaskbarMonitor.Sensors
         internal static int Status()
         {
             bool admin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
-            return (HardwareEngine.Available() ? 1 : 0) | (admin ? 2 : 0);
+            return HardwareEngine.CpuDriverStatus() | (admin ? 2 : 0) | (HardwareEngine.DriverGpuSupported ? 8 : 0);
         }
 
         internal static void Close()
@@ -57,7 +70,7 @@ namespace TaskbarMonitor.Sensors
             if ((14 | (14 << 8)) != 3598)
                 throw new InvalidOperationException("Sensor source encoding");
             if (SensorSource.Rank(0, true) != -1 || SensorSource.Rank(15, true) != -1 ||
-                SensorSource.Rank(0, false) != -1 || SensorSource.Rank(15, false) != -1)
+                SensorSource.Rank(0, false) != -1 || SensorSource.Rank(16, false) != -1)
                 throw new InvalidOperationException("Sensor source range");
             return Pack(61.5, 53);
         }

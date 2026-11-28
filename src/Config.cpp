@@ -8,6 +8,7 @@ int g_monitorHeight = 36;
 #define RUN_KEY    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APPROVED_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run"
 #define APP_NAME   L"TaskbarMonitor"
+static constexpr wchar_t TemperatureModeValue[] = L"TemperatureMode";
 
 static bool GetCurrentExecutablePath(wchar_t* outPath, DWORD pathCount) {
     DWORD length = GetModuleFileNameW(NULL, outPath, pathCount);
@@ -169,7 +170,8 @@ void SetDefaults() {
     g_config.netUnit         = NET_UNIT_BITS;
     g_config.clickThrough    = false;
     g_config.runAtStartup    = false;
-    g_config.useLibreHardware = true;
+    g_config.useLibreHardware = false;
+    g_config.temperatureChoiceMade = false;
     g_config.autoUpdate      = true;
 
     g_config.themeMode       = THEME_AUTO;
@@ -231,6 +233,12 @@ void LoadConfig() {
         ReadDword(L"NetUnit", g_config.netUnit);
         ReadBool(L"ClickThrough", g_config.clickThrough);
         ReadBool(L"UseLibreHardware", g_config.useLibreHardware);
+        int temperatureMode = -1;
+        ReadDword(TemperatureModeValue, temperatureMode);
+        if (temperatureMode == 0 || temperatureMode == 1) {
+            g_config.useLibreHardware = temperatureMode == 1;
+            g_config.temperatureChoiceMade = true;
+        }
         ReadBool(L"AutoUpdate", g_config.autoUpdate);
 
         ReadDword(L"ThemeMode", g_config.themeMode);
@@ -269,6 +277,15 @@ void LoadConfig() {
         wcscmp(g_config.targetDrive + 1, L":\\") != 0) wcscpy_s(g_config.targetDrive, L"C:\\");
 }
 
+void SaveTemperatureChoice(bool useSensors, HWND owner) {
+    g_config.useLibreHardware = useSensors;
+    g_config.temperatureChoiceMade = true;
+    DWORD mode = useSensors ? 1 : 0;
+    if (RegSetKeyValueW(HKEY_CURRENT_USER, CONFIG_KEY, TemperatureModeValue, REG_DWORD, &mode, sizeof(mode)) != ERROR_SUCCESS)
+        MessageBoxW(owner, L"Your temperature choice applies for this session, but could not be saved.",
+                    L"TaskbarMonitor", MB_OK | MB_ICONWARNING);
+}
+
 bool SaveConfig(HWND owner) {
     HKEY hKey = NULL;
     LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, CONFIG_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
@@ -305,7 +322,10 @@ bool SaveConfig(HWND owner) {
         WriteDword(L"RefreshRate", (DWORD)g_config.refreshRateMs);
         WriteDword(L"NetUnit", (DWORD)g_config.netUnit);
         WriteBool(L"ClickThrough", g_config.clickThrough);
-        WriteBool(L"UseLibreHardware", g_config.useLibreHardware);
+        if (g_config.temperatureChoiceMade) {
+            WriteBool(TemperatureModeValue, g_config.useLibreHardware);
+            WriteBool(L"UseLibreHardware", g_config.useLibreHardware);
+        }
         WriteBool(L"AutoUpdate", g_config.autoUpdate);
 
         WriteDword(L"ThemeMode", (DWORD)g_config.themeMode);

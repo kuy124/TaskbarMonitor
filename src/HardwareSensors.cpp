@@ -1,5 +1,6 @@
 #include "HardwareSensors.h"
 #include <mscoree.h>
+#include <sddl.h>
 #include <wincrypt.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -198,27 +199,76 @@ HardwareSensorStatus ReadHardwareTemperatures() {
     if (!bundleDirectory.empty()) result.noticesPath = bundleDirectory + L"\\ThirdParty-Licenses.txt";
     if (FAILED(result.error)) return result;
     DWORD flags = 0, temperatures = 0, sources = 0;
-    result.error = Call(L"Status", L"", flags);
+    result.error = Call(L"Read", L"", temperatures);
+    if (SUCCEEDED(result.error)) result.error = Call(L"Status", L"", flags);
     result.driverInstalled = (flags & 1) != 0;
     result.administrator = (flags & 2) != 0;
-    if (SUCCEEDED(result.error)) result.error = Call(L"Read", L"", temperatures);
+    result.directCpuSupported = (flags & 4) != 0;
+    result.driverGpuSupported = (flags & 8) != 0;
     if (SUCCEEDED(result.error)) result.error = Call(L"Sources", L"", sources);
     if (FAILED(result.error)) return result;
     DWORD cpu = temperatures & 65535, gpu = temperatures >> 16;
     DWORD cpuSource = sources & 255, gpuSource = sources >> 8;
-    if (cpuSource > 14 || gpuSource > 14 || (cpu != 65535) != (cpuSource != 0) || (gpu != 65535) != (gpuSource != 0)) {
+    if (cpuSource > 14 || gpuSource > 15 || (cpu != 65535) != (cpuSource != 0) || (gpu != 65535) != (gpuSource != 0)) {
         result.error = E_INVALIDARG;
         return result;
     }
     if ((cpu != 65535 && cpu > 1500) || (gpu != 65535 && gpu > 1500)) { result.error = E_INVALIDARG; return result; }
     result.temperatures.cpu = cpu == 65535 ? -1.0 : cpu / 10.0;
     result.temperatures.gpu = gpu == 65535 ? -1.0 : gpu / 10.0;
+    result.directCpu = cpuSource >= 1 && cpuSource <= 5;
+    result.directGpu = gpuSource != 0 && (gpuSource < 7 || gpuSource > 10);
     const wchar_t* cpuSources[] = { L"", L"CPU core / CCD (hottest)", L"Core Average", L"CPU (Tctl/Tdie)", L"CPU (Tdie)", L"CPU Package", L"Motherboard / EC CPU (fallback)", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"ACPI thermal zone (WMI)", L"WMI temperature probe", L"Vendor temperature interface", L"Hardware engine" };
-    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core", L"Motherboard / EC GPU (fallback)", L"Windows GPU driver (WDDM)", L"Intel IGCL temperature sensor", L"Intel Level Zero Sysman", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"NVIDIA NVML", L"AMD ADL", L"Vendor temperature interface", L"Hardware engine" };
+    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core", L"Motherboard / EC GPU (fallback)", L"Windows GPU driver (WDDM)", L"Intel IGCL temperature sensor", L"Intel Level Zero Sysman", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"NVIDIA NVML", L"AMD ADL", L"Vendor temperature interface", L"Hardware engine", L"Intel GT cores" };
     result.cpuSource = cpuSources[cpuSource];
     result.gpuSource = gpuSources[gpuSource];
     result.running = true;
     return result;
+}
+
+HRESULT InstallCpuSensorDriver() {
+    if (!IsUserAnAdmin()) return HRESULT_FROM_WIN32(ERROR_ELEVATION_REQUIRED);
+    HMODULE module = GetModuleHandleW(NULL);
+    HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(2511), RT_RCDATA);
+    const BYTE* data = resource ? static_cast<const BYTE*>(LockResource(LoadResource(module, resource))) : nullptr;
+    DWORD size = resource ? SizeofResource(module, resource) : 0;
+    if (!data || !size) return HRESULT_FROM_WIN32(ERROR_RESOURCE_DATA_NOT_FOUND);
+
+    wchar_t programFiles[MAX_PATH], suffix[40];
+    HRESULT error = SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILES, NULL, SHGFP_TYPE_CURRENT, programFiles);
+    if (FAILED(error)) return error;
+    GUID id;
+    if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, suffix, _countof(suffix))) return E_FAIL;
+    std::wstring directory = std::wstring(programFiles) + L"\\TaskbarMonitor.SensorSetup-" + suffix;
+    // The installer and its working directory must be unwritable by the unelevated user.
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)",
+            SDDL_REVISION_1, &descriptor, NULL)) return HRESULT_FROM_WIN32(GetLastError());
+    SECURITY_ATTRIBUTES security = { sizeof(security), descriptor, FALSE };
+    if (!CreateDirectoryW(directory.c_str(), &security)) error = HRESULT_FROM_WIN32(GetLastError());
+    LocalFree(descriptor);
+    if (FAILED(error)) return error;
+
+    std::wstring path = directory + L"\\PawnIO_setup.exe";
+    error = WriteNewFile(path, {L"PawnIO_setup.exe", data, size});
+    if (SUCCEEDED(error)) {
+        std::wstring command = L"\"" + path + L"\" -install -silent";
+        STARTUPINFOW startup = { sizeof(startup) };
+        PROCESS_INFORMATION process = {};
+        if (!CreateProcessW(path.c_str(), command.data(), NULL, NULL, FALSE, 0, NULL,
+                            directory.c_str(), &startup, &process)) error = HRESULT_FROM_WIN32(GetLastError());
+        else {
+            CloseHandle(process.hThread);
+            DWORD code;
+            if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
+                !GetExitCodeProcess(process.hProcess, &code)) error = HRESULT_FROM_WIN32(GetLastError());
+            else error = HRESULT_FROM_WIN32(code);
+            CloseHandle(process.hProcess);
+        }
+    }
+    DeleteFileW(path.c_str());
+    RemoveDirectoryW(directory.c_str());
+    return error;
 }
 
 bool CheckEmbeddedSensorBridge() {

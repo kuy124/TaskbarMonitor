@@ -26,6 +26,7 @@ static bool g_pdhReady = false;
 static ULONGLONG g_lastSensorPoll = 0;
 static SensorTemperatures g_localTemperatures;
 static HardwareSensorStatus g_sensorStatus;
+static bool g_gpuTemperatureApisInitialized = false;
 
 // Dynamic NVIDIA NVML Interface (Standard official driver backend)
 typedef int (*nvmlInit_t)();
@@ -44,9 +45,11 @@ static bool g_nvmlInitialized = false;
 // Dynamic NVIDIA NVAPI Interface
 typedef int* (*NvAPI_QueryInterface_t)(unsigned int offset);
 typedef int (*NvAPI_Initialize_t)();
+typedef int (*NvAPI_Unload_t)();
 typedef int (*NvAPI_EnumPhysicalGPUs_t)(void** handles, int* count);
 
 #define NVAPI_MAX_THERMAL_SENSORS_PER_GPU 3
+static constexpr int NvThermalGpu = 1, NvThermalAll = 15;
 typedef struct {
     int version;
     int count;
@@ -63,13 +66,15 @@ typedef int (*NvAPI_GPU_GetThermalSettings_t)(void* handle, int sensorIndex, NV_
 
 static HMODULE g_hNvApiDll = NULL;
 static NvAPI_Initialize_t g_NvAPI_Initialize = NULL;
+static NvAPI_Unload_t g_NvAPI_Unload = NULL;
 static NvAPI_EnumPhysicalGPUs_t g_NvAPI_EnumPhysicalGPUs = NULL;
 static NvAPI_GPU_GetThermalSettings_t g_NvAPI_GPU_GetThermalSettings = NULL;
 static void* g_nvGpuHandles[64] = {0};
 static int g_nvGpuCount = 0;
 
 // Dynamic AMD ADL Interface
-typedef int (*ADL_MAIN_CONTROL_CREATE)(int(*)(int), int);
+using AdlAllocator = void* (__stdcall*)(int);
+typedef int (*ADL_MAIN_CONTROL_CREATE)(AdlAllocator, int);
 typedef int (*ADL_MAIN_CONTROL_DESTROY)();
 typedef struct ADLTemperature {
     int iSize;
@@ -81,6 +86,9 @@ static HMODULE g_hAdlDll = NULL;
 static ADL_MAIN_CONTROL_CREATE g_ADL_Main_Control_Create = NULL;
 static ADL_MAIN_CONTROL_DESTROY g_ADL_Main_Control_Destroy = NULL;
 static ADL_OVERDRIVE5_TEMPERATURE_GET g_ADL_Overdrive5_Temperature_Get = NULL;
+static bool g_adlInitialized = false;
+
+static void* __stdcall AllocateAdl(int size) { return size > 0 ? malloc(size) : nullptr; }
 
 static ULONGLONG FileTimeToUint64(const FILETIME& ft) {
     return (((ULONGLONG)ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
@@ -92,15 +100,15 @@ void InitMetrics() {
     g_lastSensorPoll = 0;
     g_localTemperatures = {};
     g_sensorStatus = {};
-    g_nvmlInitialized = false;
-    g_nvmlDevice = NULL;
-    g_nvGpuCount = 0;
     if (PdhOpenQuery(NULL, 0, &g_hPdhQuery) == ERROR_SUCCESS) {
         PdhAddEnglishCounterW(g_hPdhQuery, L"\\GPU Engine(*)\\Utilization Percentage", 0, &g_hGpuCounter);
         PdhAddEnglishCounterW(g_hPdhQuery, L"\\PhysicalDisk(_Total)\\% Disk Time", 0, &g_hDiskCounter);
         PdhCollectQueryData(g_hPdhQuery);
     }
+}
 
+static void InitGpuTemperatureApis() {
+    g_gpuTemperatureApisInitialized = true;
     // 1. Try NVIDIA NVML
     g_hNvmlDll = LoadLibraryW(L"nvml.dll");
     if (!g_hNvmlDll) g_hNvmlDll = LoadLibraryW(L"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll");
@@ -112,15 +120,13 @@ void InitMetrics() {
         if (!g_nvmlDeviceGetHandleByIndex) g_nvmlDeviceGetHandleByIndex = (nvmlDeviceGetHandleByIndex_t)GetProcAddress(g_hNvmlDll, "nvmlDeviceGetHandleByIndex");
         g_nvmlDeviceGetTemperature = (nvmlDeviceGetTemperature_t)GetProcAddress(g_hNvmlDll, "nvmlDeviceGetTemperature");
 
-        if (g_nvmlInit && g_nvmlInit() == 0) {
-            if (g_nvmlDeviceGetHandleByIndex && g_nvmlDeviceGetHandleByIndex(0, &g_nvmlDevice) == 0) {
-                g_nvmlInitialized = true;
-            }
-        }
+        g_nvmlInitialized = g_nvmlInit && g_nvmlInit() == 0;
+        if (g_nvmlInitialized && g_nvmlDeviceGetHandleByIndex && g_nvmlDeviceGetHandleByIndex(0, &g_nvmlDevice) != 0)
+            g_nvmlDevice = NULL;
     }
 
     // 2. Try NVIDIA NVAPI
-    if (!g_nvmlInitialized) {
+    if (!g_nvmlDevice) {
         g_hNvApiDll = LoadLibraryW(L"nvapi64.dll");
         if (!g_hNvApiDll) g_hNvApiDll = LoadLibraryW(L"nvapi.dll");
         if (g_hNvApiDll) {
@@ -130,6 +136,7 @@ void InitMetrics() {
                 g_NvAPI_EnumPhysicalGPUs = (NvAPI_EnumPhysicalGPUs_t)NvAPI_QueryInterface(0xE5AC921F);
                 g_NvAPI_GPU_GetThermalSettings = (NvAPI_GPU_GetThermalSettings_t)NvAPI_QueryInterface(0xE3640A56);
                 if (g_NvAPI_Initialize && g_NvAPI_Initialize() == 0) {
+                    g_NvAPI_Unload = (NvAPI_Unload_t)NvAPI_QueryInterface(0xD22BDD7E);
                     if (g_NvAPI_EnumPhysicalGPUs) {
                         g_NvAPI_EnumPhysicalGPUs(g_nvGpuHandles, &g_nvGpuCount);
                     }
@@ -145,11 +152,29 @@ void InitMetrics() {
         g_ADL_Main_Control_Create = (ADL_MAIN_CONTROL_CREATE)GetProcAddress(g_hAdlDll, "ADL_Main_Control_Create");
         g_ADL_Main_Control_Destroy = (ADL_MAIN_CONTROL_DESTROY)GetProcAddress(g_hAdlDll, "ADL_Main_Control_Destroy");
         g_ADL_Overdrive5_Temperature_Get = (ADL_OVERDRIVE5_TEMPERATURE_GET)GetProcAddress(g_hAdlDll, "ADL_Overdrive5_Temperature_Get");
-        if (g_ADL_Main_Control_Create) {
-            g_ADL_Main_Control_Create(NULL, 1);
-        }
+        g_adlInitialized = g_ADL_Main_Control_Create && g_ADL_Main_Control_Create(AllocateAdl, 1) == 0;
     }
+}
 
+static void CloseGpuTemperatureApis() {
+    if (g_nvmlInitialized && g_nvmlShutdown) g_nvmlShutdown();
+    g_nvmlInitialized = false;
+    g_nvmlDevice = NULL;
+    g_nvGpuCount = 0;
+    if (g_hNvmlDll) { FreeLibrary(g_hNvmlDll); g_hNvmlDll = NULL; }
+    if (g_hNvApiDll) {
+        if (g_NvAPI_Unload) g_NvAPI_Unload();
+        g_NvAPI_Unload = NULL;
+        FreeLibrary(g_hNvApiDll);
+        g_hNvApiDll = NULL;
+    }
+    if (g_hAdlDll) {
+        if (g_adlInitialized && g_ADL_Main_Control_Destroy) g_ADL_Main_Control_Destroy();
+        g_adlInitialized = false;
+        FreeLibrary(g_hAdlDll);
+        g_hAdlDll = NULL;
+    }
+    g_gpuTemperatureApisInitialized = false;
 }
 
 void CleanupMetrics() {
@@ -158,16 +183,7 @@ void CleanupMetrics() {
         g_hPdhQuery = NULL;
         g_hGpuCounter = g_hDiskCounter = NULL;
     }
-
-    if (g_nvmlInitialized && g_nvmlShutdown) g_nvmlShutdown();
-    g_nvmlInitialized = false;
-    if (g_hNvmlDll) { FreeLibrary(g_hNvmlDll); g_hNvmlDll = NULL; }
-    if (g_hNvApiDll) { FreeLibrary(g_hNvApiDll); g_hNvApiDll = NULL; }
-    if (g_hAdlDll) {
-        if (g_ADL_Main_Control_Destroy) g_ADL_Main_Control_Destroy();
-        FreeLibrary(g_hAdlDll);
-        g_hAdlDll = NULL;
-    }
+    CloseGpuTemperatureApis();
 }
 
 void UpdateCPUTemp() {
@@ -185,57 +201,59 @@ void UpdateCPUTemp() {
     g_metrics.cpuTempEstimated = true;
 }
 
-void UpdateGPUTemp() {
-    if (!g_config.showGPUTemp) return;
-
-    if (g_config.useLibreHardware && g_lastSensorPoll != 0 && g_localTemperatures.gpu >= 0.0) {
-        g_metrics.gpuTemp = g_localTemperatures.gpu;
-        g_metrics.gpuTempEstimated = false;
-        return;
-    }
-
-    bool foundSensor = false;
-
+static double ReadNativeGpuTemperature() {
+    if (!g_gpuTemperatureApisInitialized) InitGpuTemperatureApis();
     // 1. Query NVIDIA NVML
     if (g_nvmlInitialized && g_nvmlDevice && g_nvmlDeviceGetTemperature) {
         unsigned int temp = 0;
         if (g_nvmlDeviceGetTemperature(g_nvmlDevice, 0, &temp) == 0 && temp > 0 && temp < 125) {
-            g_metrics.gpuTemp = (double)temp;
-            g_metrics.gpuTempEstimated = false;
-            foundSensor = true;
+            return temp;
         }
     }
 
     // 2. Query NVIDIA NVAPI
-    if (!foundSensor && g_NvAPI_GPU_GetThermalSettings && g_nvGpuCount > 0) {
-        NV_GPU_THERMAL_SETTINGS nts = {0};
-        nts.version = (int)(sizeof(NV_GPU_THERMAL_SETTINGS) | (2 << 16));
-        if (g_NvAPI_GPU_GetThermalSettings(g_nvGpuHandles[0], 0, &nts) == 0) {
-            if (nts.count > 0 && nts.sensor[0].currentTemp > 0 && nts.sensor[0].currentTemp < 125) {
-                g_metrics.gpuTemp = (double)nts.sensor[0].currentTemp;
-                g_metrics.gpuTempEstimated = false;
-                foundSensor = true;
+    if (g_NvAPI_GPU_GetThermalSettings && g_nvGpuCount > 0) {
+        int hottest = 0;
+        for (int adapter = 0; adapter < std::min(g_nvGpuCount, 64); ++adapter) {
+            NV_GPU_THERMAL_SETTINGS settings = {};
+            settings.version = static_cast<int>(sizeof(settings) | (2 << 16));
+            if (g_NvAPI_GPU_GetThermalSettings(g_nvGpuHandles[adapter], NvThermalAll, &settings) != 0) continue;
+            for (int i = 0; i < std::min(settings.count, NVAPI_MAX_THERMAL_SENSORS_PER_GPU); ++i) {
+                const auto& sensor = settings.sensor[i];
+                if (sensor.target == NvThermalGpu && sensor.currentTemp <= 150)
+                    hottest = std::max(hottest, sensor.currentTemp);
             }
         }
+        if (hottest > 0) return hottest;
     }
 
     // 3. Query AMD ADL
-    if (!foundSensor && g_ADL_Overdrive5_Temperature_Get) {
+    if (g_adlInitialized && g_ADL_Overdrive5_Temperature_Get) {
         ADLTemperature adlTemp = { sizeof(ADLTemperature), 0 };
         if (g_ADL_Overdrive5_Temperature_Get(0, 0, &adlTemp) == 0) {
-            if (adlTemp.iTemperature > 0) {
-                g_metrics.gpuTemp = (double)adlTemp.iTemperature / 1000.0;
-                g_metrics.gpuTempEstimated = false;
-                foundSensor = true;
+            if (adlTemp.iTemperature > 0 && adlTemp.iTemperature <= 150000) {
+                return adlTemp.iTemperature / 1000.0;
             }
         }
     }
 
-    if (!foundSensor) {
-        g_metrics.gpuTemp = EstimateTemperature(g_metrics.gpuUsage, g_metrics.gpuTemp,
-                                                g_metrics.gpuTempEstimated, 36.0, 38.0);
-        g_metrics.gpuTempEstimated = true;
+    return -1.0;
+}
+
+void UpdateGPUTemp() {
+    if (!g_config.showGPUTemp) return;
+    if (g_config.useLibreHardware) {
+        double measured = g_localTemperatures.gpu;
+        if (measured < 0.0) measured = ReadNativeGpuTemperature();
+        if (measured >= 0.0) {
+            g_metrics.gpuTemp = measured;
+            g_metrics.gpuTempEstimated = false;
+            return;
+        }
     }
+    g_metrics.gpuTemp = EstimateTemperature(g_metrics.gpuUsage, g_metrics.gpuTemp,
+                                            g_metrics.gpuTempEstimated, 36.0, 38.0);
+    g_metrics.gpuTempEstimated = true;
 }
 
 void UpdateGPU() {
@@ -399,6 +417,11 @@ void UpdateAllMetrics() {
     } else {
         g_lastSensorPoll = 0;
         g_localTemperatures = {};
+        if (g_sensorStatus.checked) {
+            CloseHardwareSensors();
+            g_sensorStatus = {};
+        }
+        if (g_gpuTemperatureApisInitialized) CloseGpuTemperatureApis();
     }
     UpdateCPU();
     UpdateGPU();
@@ -447,7 +470,7 @@ static void Run() {
             g_config = config;
             UpdateAllMetrics();
         }
-        if (probe) g_sensorStatus = ReadHardwareTemperatures();
+        if (probe && config.useLibreHardware) g_sensorStatus = ReadHardwareTemperatures();
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             g_snapshot = g_metrics;
@@ -506,7 +529,7 @@ SystemMetrics GetLatestMetrics() {
 
 bool RequestHardwareSensorRefresh() {
     std::lock_guard<std::mutex> lock(sampling::g_mutex);
-    if (!sampling::g_thread.joinable()) return false;
+    if (!g_config.useLibreHardware || !sampling::g_thread.joinable()) return false;
     sampling::g_probeRequested = true;
     sampling::g_sensorSnapshot = {};
     sampling::g_wake.notify_one();

@@ -55,6 +55,7 @@ struct MonitorConfig {
     bool clickThrough;    // Mouse clicks pass through
     bool runAtStartup;
     bool useLibreHardware;
+    bool temperatureChoiceMade;
     bool autoUpdate;
 
     // Theme & Colors
@@ -91,6 +92,7 @@ extern int g_monitorHeight;
 
 void SetDefaults();
 void LoadConfig();
+void SaveTemperatureChoice(bool useSensors, HWND owner);
 bool SaveConfig(HWND owner = NULL);
 int CalculateTotalWidth(HDC hdc = NULL);
 
