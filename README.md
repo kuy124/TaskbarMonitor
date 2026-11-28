@@ -58,7 +58,7 @@ A sensor engine is embedded in TaskbarMonitor.exe and loaded in-process. It read
 
 The page shows detected temperatures and their sensor sources, **Refresh sensors**, and **Use detected readings**. CPU package and physical Tdie readings take priority over core or CCD readings. Generic ACPI/WMI zones are low-priority fallbacks that keep their source label because they can measure an area other than the CPU die. Readings above 90°C remain visible with a cooling warning.
 
-GPU detection checks NVIDIA GeForce and other NVIDIA cards through NVAPI/NVML, AMD Radeon cards and APUs through ADL, and Intel graphics through IGCL, Level Zero Sysman, and the integrated graphics sensor where supported. Windows WDDM and optional telemetry fill gaps. Core readings take priority over hotspot readings. CPU package temperature is never substituted for GPU temperature. On multi-GPU systems the monitor shows one preferred reading.
+GPU detection checks NVIDIA GeForce and other NVIDIA cards through NVAPI/NVML, AMD Radeon cards and APUs through ADLX or ADL, and Intel graphics through IGCL, Level Zero Sysman, and the integrated graphics sensor where supported. Windows WDDM and optional telemetry fill gaps. Core readings take priority over hotspot readings. CPU package temperature is never substituted for GPU temperature. On multi-GPU systems the monitor shows one preferred reading.
 
 Memory, VRM, thermal limits, and distance-to-TjMax readings are excluded. A provider that fails to initialize no longer prevents the remaining providers from reporting temperatures.
 
@@ -73,19 +73,22 @@ The .NET Framework 4.7.2+ runtime is required (included on current Windows relea
 The built-in engine and its optional fallbacks cover:
 
 - **NVIDIA NVAPI and NVML:** GPU core temperature from an installed NVIDIA driver.
+- **[AMD ADLX](https://gpuopen.com/adlx/):** Radeon core temperature, with hotspot as a fallback, when the installed AMD driver exposes either reading.
 - **AMD ADL:** Radeon core/edge and junction temperatures through Overdrive and PMLog, depending on the installed driver.
+- **[Windows WDDM](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmthk/ns-d3dkmthk-_d3dkmt_adapter_perfdata):** checks the temperatures of both display-connected and render-only GPUs, including linked physical adapters, where the driver supports it.
 - **Intel IGCL temperature sensors:** standalone ControlLib GPU sensor enumeration.
 - **Intel Level Zero Sysman:** GPU-specific sensors when an installed `ze_loader.dll`
   and graphics driver support standalone Sysman.
 - **Intel GT cores:** the separate graphics-domain sensor on supported Kaby Lake,
   Coffee Lake, Tiger Lake, and Alder Lake integrated GPUs, using PawnIO with administrator access.
+- **Windows thermal-zone counters:** can report firmware temperatures on systems where the usual ACPI WMI query is unavailable. CPU-labelled zones are preferred; the source is labelled as a thermal zone because it may measure an area around the CPU.
+- **[Core Temp shared memory](https://www.alcpu.com/CoreTemp/developers.html):** reads the hottest valid CPU temperature when Core Temp is running. Supports Celsius and Fahrenheit; distance-to-TjMax mode is ignored.
 - **HWiNFO shared memory:** enable Shared Memory Support in a running HWiNFO.
   Reads CPU and explicitly labelled GPU / CPU GT Cores temperatures; rejects stale
   data. The free HWiNFO edition limits shared-memory sessions to 12 hours.
 - **AIDA64 shared memory:** enable Preferences → Hardware Monitoring → External
   Applications → Enable shared memory in a running AIDA64.
-- **LibreHardwareMonitor / OpenHardwareMonitor WMI:** reads an available running
-  monitor's CPU/GPU temperature provider.
+- **LibreHardwareMonitor / OpenHardwareMonitor WMI:** reads CPU/GPU temperatures from a running version that publishes the WMI provider.
 - **Acer NitroSense telemetry:** subscribes to NitroSense loopback MQTT broker on
   port 15150 while NitroSense's monitoring UI is open. Covers missing CPU and GPU readings, checks message
   freshness, and accepts only the pinned local `CN=localhost` certificate. Set a DWORD
@@ -197,6 +200,7 @@ ctest --output-on-failure -C Release
 ### Optional Runtime Libraries
 These are used when the installed driver provides them:
 - nvml.dll: NVIDIA Management Library (GPU temperature)
+- amdadlx64.dll / amdadlx32.dll: AMD Device Library eXtra (GPU temperature)
 - atiadlxx.dll: AMD Display Library (GPU temperature)
 - ControlLib.dll: Intel Graphics Control Library (GPU temperature)
 - ze_loader.dll: Intel Level Zero Sysman (GPU temperature)

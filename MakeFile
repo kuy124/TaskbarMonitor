@@ -24,7 +24,7 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $@ $(CXXFLAGS) $(LDFLAGS)
 
-build/sensors/EmbeddedSensors.rc: src/SensorBridge.cs src/HardwareEngine.cs src/IntelGtTemperature.cs src/AdditionalSensors.cs tools/build_sensors.ps1
+build/sensors/EmbeddedSensors.rc: src/SensorBridge.cs src/HardwareEngine.cs src/IntelGtTemperature.cs src/AmdAdlxTemperature.cs src/AdditionalSensors.cs tools/build_sensors.ps1
 	powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_sensors.ps1 -Output build/sensors
 
 src/TaskbarMonitor.res.o: src/TaskbarMonitor.rc src/TaskbarMonitor.manifest src/TaskbarMonitor.ico src/Resource.h src/Updater.ps1 src/SensorResources.rc build/sensors/EmbeddedSensors.rc

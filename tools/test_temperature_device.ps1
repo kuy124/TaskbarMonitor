@@ -36,14 +36,16 @@ try {
         $extra.GetMethod('ParseHwinfo', $flags).Invoke($null, $arguments) | Out-Null
         Record "HWiNFO map: length=$($data.Length); age=$($now-[BitConverter]::ToInt64($data,12)); CPU=$($arguments[2]); GPU=$($arguments[3])"
     } catch { Record "HWiNFO map FAILED: $($_.Exception.GetBaseException())" }
-    foreach ($method in @('WmiThermalZone', 'WmiTemperatureProbe')) {
+    try { Record "Core Temp: $($extra.GetMethod('CoreTemp', $flags).Invoke($null, $null))" }
+    catch { Record "Core Temp: $($_.Exception.GetBaseException().Message)" }
+    foreach ($method in @('WmiThermalZone', 'ThermalZoneCounters')) {
         try {
             $arguments = [object[]]@([double]-1, [int]0)
             $engine.GetMethod($method, $flags).Invoke($null, $arguments) | Out-Null
             Record "${method}: value=$($arguments[0]); source=$($arguments[1])"
         } catch { Record "${method}: $($_.Exception.GetBaseException().Message)" }
     }
-    foreach ($method in @('WddmGpu', 'IntelGpu', 'SysmanGpu', 'NvmlGpu', 'EmbeddedGpu')) {
+    foreach ($method in @('WddmGpu', 'IntelGpu', 'SysmanGpu', 'NvmlGpu', 'EmbeddedGpu', 'AdlxGpu')) {
         try {
             $arguments = [object[]]@([double]-1, [int]0)
             $engine.GetMethod($method, $flags).Invoke($null, $arguments) | Out-Null
@@ -62,7 +64,7 @@ try {
         if ($cpu -gt 0 -and $cpu -le 1500 -and $cpuSource -ge 1 -and $cpuSource -le 5) {
             ++$directCpuSamples
         }
-        if ($gpu -gt 0 -and $gpu -le 1500 -and ($gpuSource -in 1,2,3,4,5,6,11,12,15)) {
+        if ($gpu -gt 0 -and $gpu -le 1500 -and ($gpuSource -in 1,2,3,4,5,6,11,12,13,14,15)) {
             ++$directGpuSamples
         }
         Record "Sample ${sample}: CPU tenths=$cpu; GPU tenths=$gpu; sources=$sources (65535=unavailable)"

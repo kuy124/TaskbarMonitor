@@ -72,6 +72,18 @@ namespace TaskbarMonitor.Sensors
                 ParseAida(Encoding.Default.GetString(bytes, 0, end), ref cpu, ref gpu);
             }
         }
+
+        private static int WmiTarget(string parent, string name)
+        {
+            int target = Target(name);
+            if (parent.StartsWith("/intelcpu/", StringComparison.Ordinal) || parent.StartsWith("/amdcpu/", StringComparison.Ordinal))
+                return target == 1 || HardwareEngine.CpuTemperatureSource(name) != 0 ? 1 : 0;
+            if (target == 2 && (parent.StartsWith("/gpu-", StringComparison.Ordinal) ||
+                parent.StartsWith("/atigpu/", StringComparison.Ordinal) || parent.StartsWith("/nvidiagpu/", StringComparison.Ordinal)))
+                return 2;
+            return 0;
+        }
+
         private static void Wmi(string provider, ref double cpu, ref double gpu)
         {
             EnumerationOptions options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(1), ReturnImmediately = false };
@@ -83,12 +95,52 @@ namespace TaskbarMonitor.Sensors
                     {
                         string parent = Convert.ToString(sensor["Parent"]).ToLowerInvariant();
                         string name = Convert.ToString(sensor["Name"]);
-                        int target = Target(name);
-                        if ((target == 1 && (parent.StartsWith("/intelcpu/") || parent.StartsWith("/amdcpu/"))) ||
-                            (target == 2 && parent.StartsWith("/gpu-")))
-                            if (sensor["Value"] != null) Reading(name, Convert.ToDouble(sensor["Value"], CultureInfo.InvariantCulture), ref cpu, ref gpu);
+                        int target = WmiTarget(parent, name);
+                        if (target == 0 || sensor["Value"] == null) continue;
+                        double value = Convert.ToDouble(sensor["Value"], CultureInfo.InvariantCulture);
+                        if (target == 1) cpu = Hottest(cpu, value);
+                        else gpu = Hottest(gpu, value);
                     }
         }
+
+        // CoreTempSharedDataEx keeps the original four-byte-aligned layout through these flags.
+        private const int CoreTempCoreCount = 1536, CoreTempSocketCount = 1540, CoreTempValues = 1544;
+        private const int CoreTempFahrenheit = 2684, CoreTempDeltaToTjMax = 2685, CoreTempSampleSize = 2686;
+
+        private static double ParseCoreTemp(byte[] data)
+        {
+            if (data.Length < CoreTempSampleSize || data[CoreTempFahrenheit] > 1 || data[CoreTempDeltaToTjMax] != 0) return -1;
+            uint cores = BitConverter.ToUInt32(data, CoreTempCoreCount);
+            uint sockets = BitConverter.ToUInt32(data, CoreTempSocketCount);
+            ulong count = (ulong)cores * sockets;
+            if (count == 0 || count > 256 || sockets > 128) return -1;
+            double best = -1;
+            for (int i = 0; i < (int)count; ++i)
+            {
+                double value = BitConverter.ToSingle(data, CoreTempValues + i * sizeof(float));
+                if (data[CoreTempFahrenheit] == 1) value = (value - 32) * 5 / 9;
+                best = Hottest(best, value);
+            }
+            return best;
+        }
+
+        private static MemoryMappedFile OpenCoreTemp()
+        {
+            try { return MemoryMappedFile.OpenExisting("CoreTempMappingObjectEx", MemoryMappedFileRights.Read); }
+            catch (FileNotFoundException) { return MemoryMappedFile.OpenExisting("CoreTempMappingObject", MemoryMappedFileRights.Read); }
+        }
+
+        private static double CoreTemp()
+        {
+            using (MemoryMappedFile mapping = OpenCoreTemp())
+            using (MemoryMappedViewAccessor view = mapping.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read))
+            {
+                if (view.Capacity < CoreTempSampleSize) return -1;
+                byte[] data = new byte[CoreTempSampleSize];
+                return view.ReadArray(0, data, 0, data.Length) == data.Length ? ParseCoreTemp(data) : -1;
+            }
+        }
+
         private static string Label(byte[] data, int offset, int length)
         {
             int end = Array.IndexOf(data, (byte)0, offset, length);
@@ -163,6 +215,8 @@ namespace TaskbarMonitor.Sensors
                 IgnoreUnavailable(delegate { Hwinfo(ref externalCpu, ref externalGpu); });
                 Prefer(externalCpu, 9, true, ref cachedCpu, ref cachedCpuSource);
                 Prefer(externalGpu, 9, false, ref cachedGpu, ref cachedGpuSource);
+                if (SensorSource.Better(13, cachedCpuSource, true) && SensorSource.Better(13, cpuSource, true))
+                    IgnoreUnavailable(delegate { Prefer(CoreTemp(), 13, true, ref cachedCpu, ref cachedCpuSource); });
                 externalCpu = externalGpu = -1;
                 IgnoreUnavailable(delegate { Aida(ref externalCpu, ref externalGpu); });
                 Prefer(externalCpu, 7, true, ref cachedCpu, ref cachedCpuSource);
@@ -189,6 +243,25 @@ namespace TaskbarMonitor.Sensors
             if (cpu != 61.5 || gpu != 53 || Target("CPU GT Cores") != 2 || Target("GPU Memory") != 0 ||
                 Target("CPU Package Maximum") != 0 || Valid(Double.NaN) || Valid(0) || Valid(151))
                 throw new InvalidOperationException("External sensor validation");
+            if (WmiTarget("/amdcpu/0", "Core (Tdie)") != 1 || WmiTarget("/atigpu/0", "GPU Core") != 2 ||
+                WmiTarget("/nvidiagpu/0", "GPU Core") != 2 || WmiTarget("/gpu-intel/0", "GPU Memory Junction") != 0 ||
+                WmiTarget("/intelcpu/0", "CPU Core #1 Distance to TjMax") != 0)
+                throw new InvalidOperationException("External WMI sensor classification");
+            byte[] coreTemp = new byte[CoreTempSampleSize];
+            coreTemp[CoreTempCoreCount] = coreTemp[CoreTempSocketCount] = 2;
+            Array.Copy(BitConverter.GetBytes(41f), 0, coreTemp, CoreTempValues, 4);
+            Array.Copy(BitConverter.GetBytes(65f), 0, coreTemp, CoreTempValues + 8, 4);
+            Array.Copy(BitConverter.GetBytes(Single.NaN), 0, coreTemp, CoreTempValues + 12, 4);
+            if (ParseCoreTemp(coreTemp) != 65 || ParseCoreTemp(new byte[CoreTempSampleSize - 1]) != -1)
+                throw new InvalidOperationException("Core Temp sample bounds and hottest core");
+            coreTemp[CoreTempFahrenheit] = 1;
+            Array.Copy(BitConverter.GetBytes(158f), 0, coreTemp, CoreTempValues, 4);
+            if (ParseCoreTemp(coreTemp) != 70) throw new InvalidOperationException("Core Temp Fahrenheit conversion");
+            coreTemp[CoreTempDeltaToTjMax] = 1;
+            if (ParseCoreTemp(coreTemp) != -1) throw new InvalidOperationException("Core Temp distance to TjMax");
+            coreTemp[CoreTempDeltaToTjMax] = 0;
+            coreTemp[CoreTempCoreCount] = 129;
+            if (ParseCoreTemp(coreTemp) != -1) throw new InvalidOperationException("Core Temp invalid core count");
             byte[] data = new byte[624];
             Action<int, uint> put = delegate(int offset, uint value) { Array.Copy(BitConverter.GetBytes(value), 0, data, offset, 4); };
             put(0, 0x53695748); put(4, 2); Array.Copy(BitConverter.GetBytes(1000L), 0, data, 12, 8);

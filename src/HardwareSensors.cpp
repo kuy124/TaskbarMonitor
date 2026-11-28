@@ -218,8 +218,8 @@ HardwareSensorStatus ReadHardwareTemperatures() {
     result.temperatures.gpu = gpu == 65535 ? -1.0 : gpu / 10.0;
     result.directCpu = cpuSource >= 1 && cpuSource <= 5;
     result.directGpu = gpuSource != 0 && (gpuSource < 7 || gpuSource > 10);
-    const wchar_t* cpuSources[] = { L"", L"CPU core / CCD (hottest)", L"Core Average", L"CPU (Tctl/Tdie)", L"CPU (Tdie)", L"CPU Package", L"Motherboard / EC CPU (fallback)", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"ACPI thermal zone (WMI)", L"WMI temperature probe", L"Vendor temperature interface", L"Hardware engine" };
-    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core", L"Motherboard / EC GPU (fallback)", L"Windows GPU driver (WDDM)", L"Intel IGCL temperature sensor", L"Intel Level Zero Sysman", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"NVIDIA NVML", L"AMD ADL", L"Vendor temperature interface", L"Hardware engine", L"Intel GT cores" };
+    const wchar_t* cpuSources[] = { L"", L"CPU core / CCD (hottest)", L"Core Average", L"CPU (Tctl/Tdie)", L"CPU (Tdie)", L"CPU Package", L"Motherboard / EC CPU (fallback)", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"ACPI thermal zone (WMI)", L"ACPI thermal zone (counters)", L"Core Temp shared memory", L"Hardware engine" };
+    const wchar_t* gpuSources[] = { L"", L"GPU Hot Spot", L"GPU Core", L"Motherboard / EC GPU (fallback)", L"Windows GPU driver (WDDM)", L"Intel IGCL temperature sensor", L"Intel Level Zero Sysman", L"AIDA64 shared memory", L"External hardware monitor (WMI)", L"HWiNFO shared memory", L"Acer NitroSense telemetry", L"NVIDIA NVML", L"AMD ADL", L"AMD ADLX (GPU core)", L"AMD ADLX (hotspot)", L"Intel GT cores" };
     result.cpuSource = cpuSources[cpuSource];
     result.gpuSource = gpuSources[gpuSource];
     result.running = true;

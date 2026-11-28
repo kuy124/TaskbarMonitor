@@ -60,7 +60,8 @@ $bridge = Join-Path $output 'TaskbarMonitor.Sensors.dll'
 & $compiler /nologo /optimize+ /target:library "/out:$bridge" /reference:System.dll /reference:System.Management.dll `
     "/reference:$(Join-Path $output 'LibreHardwareMonitorLib.dll')" "/resource:$gtModule,TaskbarMonitor.Sensors.IntelMCHBAR.bin" `
     (Join-Path $root 'src\SensorBridge.cs') (Join-Path $root 'src\HardwareEngine.cs') `
-    (Join-Path $root 'src\IntelGtTemperature.cs') (Join-Path $root 'src\AdditionalSensors.cs')
+    (Join-Path $root 'src\IntelGtTemperature.cs') (Join-Path $root 'src\AmdAdlxTemperature.cs') `
+    (Join-Path $root 'src\AdditionalSensors.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the embedded sensor bridge' }
 
 $notice = @"

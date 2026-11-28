@@ -25,7 +25,8 @@ namespace TaskbarMonitor.Sensors
                     case 1: return 88;
                     case 10: return 87;
                     case 9: return 84;
-                    case 7: return 83;
+                    case 13: return 83;
+                    case 7: return 82;
                     case 8: return 75;
                     case 6: return 70;
                     case 11: return 60;
@@ -37,18 +38,19 @@ namespace TaskbarMonitor.Sensors
             {
                 case 2: return 100;
                 case 11: return 99;
+                case 13: return 98;
                 case 12: return 97;
                 case 5: return 96;
                 case 6: return 95;
                 case 1: return 94;
                 case 15: return 93;
+                case 14: return 92;
                 case 4: return 91;
                 case 10: return 89;
                 case 9: return 88;
                 case 7: return 87;
                 case 8: return 82;
                 case 3: return 80;
-                case 13: return 50;
                 default: return -1;
             }
         }
@@ -75,8 +77,7 @@ namespace TaskbarMonitor.Sensors
         private struct AdapterList
         {
             internal uint Count;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
-            internal AdapterInfo[] Adapters;
+            internal IntPtr Adapters;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -131,7 +132,7 @@ namespace TaskbarMonitor.Sensors
         }
 
         [DllImport("gdi32.dll")]
-        private static extern int D3DKMTEnumAdapters(ref AdapterList adapters);
+        private static extern int D3DKMTEnumAdapters2(ref AdapterList adapters);
         [DllImport("gdi32.dll")]
         private static extern int D3DKMTQueryAdapterInfo(ref AdapterQuery query);
         [DllImport("gdi32.dll")]
@@ -179,6 +180,12 @@ namespace TaskbarMonitor.Sensors
         private static readonly Version MinimumPawnIoVersion = new Version(2, 1);
         private static readonly Regex CoreTemperatureName = new Regex(
             @"^(?:(?:CPU )?(?:[PE]-)?Core #[0-9]+|CCD[0-9]+ \(Tdie\))$", RegexOptions.CultureInvariant);
+        private static readonly Regex CpuZoneName = new Regex(
+            @"(?:^|[\\.\s_])(?:T?CPU(?:TEMP|S|T|Z)?|PROC(?:ESSOR)?)(?=[0-9]|$|[\\.\s_])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex OtherZoneName = new Regex(
+            @"(?:^|[\\.\s_])(?:[DI]?GPU|GFX|VGA|BAT(?:T|TERY)?|SKIN|VRM|SSD|NVME|PMIC)(?=[0-9]|$|[\\.\s_])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static double cachedCpu = -1, cachedGpu = -1;
         private static int cachedCpuSource, cachedGpuSource;
         internal static bool DriverGpuSupported { get; private set; }
@@ -243,23 +250,22 @@ namespace TaskbarMonitor.Sensors
                 cachedCpu = cachedGpu = -1;
                 cachedCpuSource = cachedGpuSource = 0;
                 TryRead(delegate { ReadCpu(ref cachedCpu, ref cachedCpuSource); });
-                if (cachedCpuSource == 0)
-                {
-                    TryRead(delegate { WmiThermalZone(ref cachedCpu, ref cachedCpuSource); });
-                    TryRead(delegate { WmiTemperatureProbe(ref cachedCpu, ref cachedCpuSource); });
-                }
+                if (cachedCpuSource == 0) TryRead(delegate { WmiThermalZone(ref cachedCpu, ref cachedCpuSource); });
+                if (cachedCpuSource == 0) TryRead(delegate { ThermalZoneCounters(ref cachedCpu, ref cachedCpuSource); });
                 TryRead(delegate { WddmGpu(ref cachedGpu, ref cachedGpuSource); });
                 TryRead(delegate { IntelGpu(ref cachedGpu, ref cachedGpuSource); });
                 TryRead(delegate { SysmanGpu(ref cachedGpu, ref cachedGpuSource); });
                 TryRead(delegate { NvmlGpu(ref cachedGpu, ref cachedGpuSource); });
                 TryRead(delegate { EmbeddedGpu(ref cachedGpu, ref cachedGpuSource); });
+                if (SensorSource.Better(13, cachedGpuSource, false))
+                    TryRead(delegate { AdlxGpu(ref cachedGpu, ref cachedGpuSource); });
                 nextProbe = DateTime.UtcNow.AddSeconds(5);
             }
             Offer(cachedCpu, cachedCpuSource, true, ref cpu, ref cpuSource);
             Offer(cachedGpu, cachedGpuSource, false, ref gpu, ref gpuSource);
         }
 
-        private static int CpuTemperatureSource(string name)
+        internal static int CpuTemperatureSource(string name)
         {
             switch (name)
             {
@@ -343,48 +349,75 @@ namespace TaskbarMonitor.Sensors
             Offer(core, 2, false, ref gpu, ref source);
             Offer(hotspot, 1, false, ref gpu, ref source);
             DriverGpuSupported = intelIntegrated && IntelGtTemperature.SupportsProcessor();
-            if (source == 0 && DriverGpuSupported && (CpuDriverStatus() & 1) != 0)
+            if (DriverGpuSupported && SensorSource.Better(15, source, false) && (CpuDriverStatus() & 1) != 0)
                 Offer(IntelGtTemperature.Read(), 15, false, ref gpu, ref source);
         }
 
         private static double Kelvin(double raw)
         {
+            if (raw == 2732) return -1; // 0 °C rounded to the nearest tenth of a Kelvin.
             double value = raw / 10.0 - 273.15;
             return Valid(value) ? value : -1;
         }
 
+        private static double ThermalCounterTemperature(double precise, double kelvin)
+        {
+            double value = Kelvin(precise);
+            return Valid(value) ? value : Kelvin(kelvin * 10);
+        }
+
+        private static void PreferThermalZone(string name, double value, ref double best, ref int priority)
+        {
+            if (!Valid(value) || String.IsNullOrWhiteSpace(name) ||
+                name.Equals("_Total", StringComparison.OrdinalIgnoreCase) || OtherZoneName.IsMatch(name)) return;
+            int candidate = CpuZoneName.IsMatch(name) ? 2 : 1;
+            if (candidate < priority || (candidate == priority && value <= best)) return;
+            best = value;
+            priority = candidate;
+        }
+
         private static void WmiThermalZone(ref double cpu, ref int source)
         {
-            EnumerationOptions options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(1), ReturnImmediately = false };
+            double best = -1;
+            int priority = 0;
+            EnumerationOptions options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(1) };
             using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
                 new ManagementScope(@"root\WMI"),
-                new ObjectQuery("SELECT CurrentTemperature FROM MSAcipi_ThermalZoneTemperature"), options))
+                new ObjectQuery("SELECT InstanceName, CurrentTemperature FROM MSAcipi_ThermalZoneTemperature"), options))
             using (ManagementObjectCollection zones = searcher.Get())
                 foreach (ManagementObject zone in zones)
                     using (zone)
                     {
-                        if (zone["CurrentTemperature"] == null) continue;
                         double value = Kelvin(Convert.ToDouble(zone["CurrentTemperature"], CultureInfo.InvariantCulture));
-                        Offer(value, 11, true, ref cpu, ref source);
+                        PreferThermalZone(Convert.ToString(zone["InstanceName"]), value, ref best, ref priority);
                     }
+            Offer(best, 11, true, ref cpu, ref source);
         }
 
-        private static void WmiTemperatureProbe(ref double cpu, ref int source)
+        private static void ThermalZoneCounters(ref double cpu, ref int source)
         {
-            EnumerationOptions options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(1), ReturnImmediately = false };
+            double best = -1;
+            int priority = 0;
+            EnumerationOptions options = new EnumerationOptions { Timeout = TimeSpan.FromSeconds(1) };
             using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
                 new ManagementScope(@"root\CIMV2"),
-                new ObjectQuery("SELECT CurrentReading, Name FROM Win32_TemperatureProbe"), options))
-            using (ManagementObjectCollection probes = searcher.Get())
-                foreach (ManagementObject probe in probes)
-                    using (probe)
+                new ObjectQuery("SELECT * FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation"), options))
+            using (ManagementObjectCollection zones = searcher.Get())
+                foreach (ManagementObject zone in zones)
+                    using (zone)
                     {
-                        if (probe["CurrentReading"] == null) continue;
-                        string name = Convert.ToString(probe["Name"]).ToLowerInvariant();
-                        if (name.Length > 0 && name.Contains("gpu")) continue;
-                        double value = Kelvin(Convert.ToDouble(probe["CurrentReading"], CultureInfo.InvariantCulture));
-                        Offer(value, 12, true, ref cpu, ref source);
+                        double precise = 0;
+                        foreach (PropertyData property in zone.Properties)
+                            if (property.Name == "HighPrecisionTemperature")
+                            {
+                                precise = Convert.ToDouble(property.Value, CultureInfo.InvariantCulture);
+                                break;
+                            }
+                        double kelvin = Convert.ToDouble(zone["Temperature"], CultureInfo.InvariantCulture);
+                        PreferThermalZone(Convert.ToString(zone["Name"]), ThermalCounterTemperature(precise, kelvin),
+                            ref best, ref priority);
                     }
+            Offer(best, 12, true, ref cpu, ref source);
         }
 
         private static double DriverTemperature(int status, uint temperature)
@@ -394,34 +427,58 @@ namespace TaskbarMonitor.Sensors
 
         private static void WddmGpu(ref double gpu, ref int source)
         {
-            AdapterList adapters = new AdapterList { Adapters = new AdapterInfo[16] };
+            const uint MaxAdapters = 256;
+            AdapterList adapters = new AdapterList();
+            if (D3DKMTEnumAdapters2(ref adapters) < 0 || adapters.Count == 0 || adapters.Count > MaxAdapters) return;
+            uint capacity = adapters.Count;
+            int stride = Marshal.SizeOf(typeof(AdapterInfo));
+            adapters.Adapters = Marshal.AllocHGlobal((int)capacity * stride);
             IntPtr data = IntPtr.Zero;
-            bool opened = false;
+            int opened = 0;
             try
             {
-                if (D3DKMTEnumAdapters(ref adapters) < 0) return;
-                opened = true;
+                if (D3DKMTEnumAdapters2(ref adapters) < 0) return;
+                opened = (int)Math.Min(adapters.Count, capacity);
                 int size = Marshal.SizeOf(typeof(AdapterPerformance));
                 data = Marshal.AllocHGlobal(size);
                 double result = -1;
-                for (int i = 0; i < Math.Min(adapters.Count, 16u); ++i)
+                for (int i = 0; i < opened; ++i)
                 {
-                    Marshal.StructureToPtr(new AdapterPerformance(), data, false);
-                    AdapterQuery query = new AdapterQuery { Handle = adapters.Adapters[i].Handle,
-                        Type = 62, Data = data, Size = (uint)size };
-                    int status = D3DKMTQueryAdapterInfo(ref query);
-                    AdapterPerformance performance = (AdapterPerformance)Marshal.PtrToStructure(data, typeof(AdapterPerformance));
-                    result = Hottest(result, DriverTemperature(status, performance.Temperature));
+                    uint handle = unchecked((uint)Marshal.ReadInt32(adapters.Adapters, i * stride));
+                    result = Hottest(result, WddmAdapterTemperature(handle, data, size));
                 }
                 Offer(result, 4, false, ref gpu, ref source);
             }
             finally
             {
                 if (data != IntPtr.Zero) Marshal.FreeHGlobal(data);
-                if (opened)
-                    for (int i = 0; i < Math.Min(adapters.Count, 16u); ++i)
-                        D3DKMTCloseAdapter(ref adapters.Adapters[i].Handle);
+                for (int i = 0; i < opened; ++i)
+                {
+                    uint handle = unchecked((uint)Marshal.ReadInt32(adapters.Adapters, i * stride));
+                    D3DKMTCloseAdapter(ref handle);
+                }
+                Marshal.FreeHGlobal(adapters.Adapters);
             }
+        }
+
+        private static double WddmAdapterTemperature(uint handle, IntPtr data, int size)
+        {
+            const int PhysicalAdapterCount = 30, AdapterPerfData = 62;
+            Marshal.WriteInt32(data, 0);
+            AdapterQuery query = new AdapterQuery { Handle = handle, Type = PhysicalAdapterCount, Data = data, Size = sizeof(uint) };
+            int count = D3DKMTQueryAdapterInfo(ref query) >= 0 ? Marshal.ReadInt32(data) : 1;
+            count = Math.Max(1, Math.Min(count, 64));
+            query.Type = AdapterPerfData;
+            query.Size = (uint)size;
+            double result = -1;
+            for (int i = 0; i < count; ++i)
+            {
+                Marshal.StructureToPtr(new AdapterPerformance { PhysicalAdapterIndex = (uint)i }, data, false);
+                int status = D3DKMTQueryAdapterInfo(ref query);
+                AdapterPerformance performance = (AdapterPerformance)Marshal.PtrToStructure(data, typeof(AdapterPerformance));
+                result = Hottest(result, DriverTemperature(status, performance.Temperature));
+            }
+            return result;
         }
 
         internal static double IntelTemperature()
@@ -556,12 +613,21 @@ namespace TaskbarMonitor.Sensors
             Offer(result, 11, false, ref gpu, ref source);
         }
 
+        private static void AdlxGpu(ref double gpu, ref int source)
+        {
+            double core, hotspot;
+            AmdAdlxTemperature.Read(out core, out hotspot);
+            Offer(core, 13, false, ref gpu, ref source);
+            Offer(hotspot, 14, false, ref gpu, ref source);
+        }
+
         internal static void Reset()
         {
             nextProbe = DateTime.MinValue;
             cachedCpu = cachedGpu = -1;
             cachedCpuSource = cachedGpuSource = 0;
             IntelGtTemperature.Reset();
+            TryRead(AmdAdlxTemperature.Reset);
             DriverGpuSupported = false;
             if (sensorComputer != null)
             {
@@ -608,11 +674,26 @@ namespace TaskbarMonitor.Sensors
                 CpuTemperatureSource("CPU Core #1 Distance to TjMax") != 0 || CpuTemperatureSource("Core (Tctl)") != 0 ||
                 !SensorSource.Better(1, 10, true) || !SensorSource.Better(1, 9, true))
                 throw new InvalidOperationException("Direct CPU sensor classification and priority");
-            if (Math.Abs(Kelvin(3232) - 50.05) > 0.001 || Kelvin(200) != -1 || Kelvin(5000) != -1)
+            if (Math.Abs(ThermalCounterTemperature(3232, 350) - 50.05) > 0.001 ||
+                Math.Abs(ThermalCounterTemperature(0, 323) - 49.85) > 0.001 ||
+                ThermalCounterTemperature(2732, 0) != -1 || ThermalCounterTemperature(0, 500) != -1)
                 throw new InvalidOperationException("Thermal zone conversion");
+            double zone = -1;
+            int zonePriority = 0;
+            PreferThermalZone("_Total", 100, ref zone, ref zonePriority);
+            PreferThermalZone(@"\_SB.DGPU", 90, ref zone, ref zonePriority);
+            PreferThermalZone(@"\_SB.BAT0", 80, ref zone, ref zonePriority);
+            PreferThermalZone(@"\_SB.TZ00", 60, ref zone, ref zonePriority);
+            PreferThermalZone(@"\_SB.TZ01", 70, ref zone, ref zonePriority);
+            if (zone != 70) throw new InvalidOperationException("Thermal zone exclusions and hottest fallback");
+            PreferThermalZone(@"\_SB.CPU0_0", 58, ref zone, ref zonePriority);
+            PreferThermalZone(@"\_SB.TZ02", 74, ref zone, ref zonePriority);
+            if (zone != 58) throw new InvalidOperationException("CPU thermal zone priority");
             if (!Valid(49.85) || Valid(0) || Valid(Double.NaN) || Valid(151))
                 throw new InvalidOperationException("Hardware reading validation");
-            if (Marshal.SizeOf(typeof(AdapterInfo)) != 20 || Marshal.SizeOf(typeof(AdapterList)) != 324 ||
+            if (Marshal.SizeOf(typeof(AdapterInfo)) != 20 ||
+                Marshal.SizeOf(typeof(AdapterList)) != IntPtr.Size * 2 ||
+                Marshal.OffsetOf(typeof(AdapterList), "Adapters").ToInt32() != IntPtr.Size ||
                 Marshal.SizeOf(typeof(AdapterPerformance)) != 64 ||
                 Marshal.OffsetOf(typeof(AdapterPerformance), "Temperature").ToInt32() != 56 ||
                 Marshal.SizeOf(typeof(AdapterQuery)) != (IntPtr.Size == 8 ? 24 : 16))
@@ -633,6 +714,10 @@ namespace TaskbarMonitor.Sensors
                 !SensorSource.Better(10, 11, true) || SensorSource.Better(11, 10, true) ||
                 !SensorSource.Better(11, 4, false) || SensorSource.Better(4, 11, false))
                 throw new InvalidOperationException("Sensor source priority");
+            if (!SensorSource.Better(13, 11, true) || !SensorSource.Better(11, 12, true) || !SensorSource.Better(5, 13, true) ||
+                !SensorSource.Better(13, 14, false) || !SensorSource.Better(2, 13, false) ||
+                !SensorSource.Better(14, 9, false) || !SensorSource.Better(15, 4, false))
+                throw new InvalidOperationException("Core Temp and ADLX source priority");
             double cpu = -1, gpu = -1;
             int cpuSource = 0, gpuSource = 0;
             Offer(55, 11, true, ref cpu, ref cpuSource);
