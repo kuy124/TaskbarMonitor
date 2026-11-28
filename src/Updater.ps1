@@ -83,7 +83,107 @@ function Test-UpdatesEnabled {
     return $null -eq $settings -or $null -eq $settings.AutoUpdate -or $settings.AutoUpdate -ne 0
 }
 
+function Initialize-UpdateWindow {
+    Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
+
+public sealed class UpdateWindow : Form {
+    public delegate bool Callback(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb, IntPtr p);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out Rect rect);
+    [DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int state);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { public int Left, Top, Right, Bottom; }
+
+    public static bool CanShowNotice(int state, bool fullscreen) {
+        return state == 5 && !fullscreen; // QUNS_ACCEPTS_NOTIFICATIONS
+    }
+
+    private static bool ForegroundIsFullscreen() {
+        IntPtr window = GetForegroundWindow();
+        Rect rect;
+        if (window == IntPtr.Zero || !GetWindowRect(window, out rect)) return false;
+        var name = new StringBuilder(32);
+        GetClassName(window, name, name.Capacity);
+        if (name.ToString() == "Progman" || name.ToString() == "WorkerW") return false;
+        Rectangle screen = Screen.FromHandle(window).Bounds;
+        return rect.Left <= screen.Left && rect.Top <= screen.Top &&
+               rect.Right >= screen.Right && rect.Bottom >= screen.Bottom;
+    }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
+
+    private UpdateWindow(string version) {
+        Text = "TaskbarMonitor update";
+        Font = SystemFonts.MessageBoxFont;
+        AutoScaleMode = AutoScaleMode.Font;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+        var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+                                           AutoSize = true, WrapContents = false, Padding = new Padding(12) };
+        layout.Controls.Add(new Label { Text = "TaskbarMonitor " + version + " is available.", AutoSize = true });
+        var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        var install = new Button { Text = "Install and restart", AutoSize = true };
+        var later = new Button { Text = "Not now", AutoSize = true };
+        install.Click += delegate { DialogResult = DialogResult.Yes; Close(); };
+        later.Click += delegate { Close(); };
+        AcceptButton = install;
+        CancelButton = later;
+        buttons.Controls.Add(install);
+        buttons.Controls.Add(later);
+        layout.Controls.Add(buttons);
+        Controls.Add(layout);
+    }
+
+    public static bool Offer(string version, Func<bool> keepWaiting) {
+        using (var notice = new UpdateWindow(version))
+        using (var timer = new Timer { Interval = 750 }) {
+            timer.Tick += delegate {
+                if (!keepWaiting()) { Application.ExitThread(); return; }
+                int state;
+                if (SHQueryUserNotificationState(out state) != 0 || !CanShowNotice(state, ForegroundIsFullscreen())) {
+                    if (notice.Visible) notice.Hide();
+                } else if (!notice.Visible) {
+                    notice.PerformLayout();
+                    Rectangle work = Screen.FromHandle(GetForegroundWindow()).WorkingArea;
+                    notice.Location = new Point(work.Right - notice.Width - 16, work.Bottom - notice.Height - 16);
+                    notice.Show();
+                }
+            };
+            notice.FormClosed += delegate { Application.ExitThread(); };
+            timer.Start();
+            Application.Run();
+            return notice.DialogResult == DialogResult.Yes;
+        }
+    }
+}
+'@
+}
+
 if ($SelfTest) {
+    Initialize-UpdateWindow
+    foreach ($state in @(1, 2, 3, 4, 7)) {
+        if ([UpdateWindow]::CanShowNotice($state, $false)) { throw "Update notice allowed in shell state $state" }
+    }
+    if ([UpdateWindow]::CanShowNotice(5, $true) -or ![UpdateWindow]::CanShowNotice(5, $false)) {
+        throw 'Update notice did not respect fullscreen window detection'
+    }
+    if ([UpdateWindow]::Offer('1.2.10', { $false })) { throw 'A cancelled update notice accepted installation' }
     if ((ConvertTo-ReleaseVersion 'v1.2.10') -le (ConvertTo-ReleaseVersion '1.2.9')) { throw 'Version comparison failed' }
     foreach ($tag in @('1.2', '1.2.3-beta', '../1.2.3', '1.2.3/evil')) {
         $rejected = $false
@@ -129,9 +229,9 @@ try {
     if ($version -le $current) { return }
     $asset = Get-UpdateAsset $release
     if (!(Test-UpdatesEnabled) -or $app.HasExited) { return }
-    Add-Type -AssemblyName System.Windows.Forms
-    $answer = [Windows.Forms.MessageBox]::Show("TaskbarMonitor $($version.ToString(3)) is available. Download, install, and restart now?", 'TaskbarMonitor update', 'YesNo', 'Information')
-    if ($answer -ne 'Yes' -or !(Test-UpdatesEnabled) -or $app.HasExited) { return }
+    Initialize-UpdateWindow
+    $install = [UpdateWindow]::Offer($version.ToString(3), { !$app.HasExited -and (Test-UpdatesEnabled) })
+    if (!$install -or !(Test-UpdatesEnabled) -or $app.HasExited) { return }
     $accepted = $true
 
     # Stage beside the executable so replacement is an atomic same-volume operation.
@@ -145,17 +245,6 @@ try {
     $replacement = Join-Path $stage 'TaskbarMonitor.exe'
     Expand-Update $archive $replacement $version
     if (!(Test-UpdatesEnabled) -or $app.HasExited) { return }
-    Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class UpdateWindow {
-    public delegate bool Callback(IntPtr h, IntPtr p);
-    [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb, IntPtr p);
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
-    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-}
-'@
     [UpdateWindow]::EnumWindows({ param($window, $unused)
         $ownerId = 0
         [UpdateWindow]::GetWindowThreadProcessId($window, [ref]$ownerId) | Out-Null
