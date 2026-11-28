@@ -7,6 +7,10 @@ enum LaunchMode { Cancel, Fail, ChildFails, Restart };
 static LaunchMode mode = Cancel;
 static bool elevated = false, closed = false;
 static int warnings = 0, launches = 0, installQuestions = 0;
+static int foregroundPrompts = 0;
+static bool continueToUac = true;
+static HWND foregroundWindow = NULL;
+static HWND launchOwner = NULL;
 static int installAnswer = IDNO;
 static std::wstring completionName;
 static std::wstring lastArguments;
@@ -19,7 +23,9 @@ static int FakeMessageBox(HWND, LPCWSTR, LPCWSTR, UINT type) {
 static BOOL FakeShellExecute(SHELLEXECUTEINFOW* launch) {
     assert(ElevationRestartPending()); // Prevent re-entry while UAC itself is pending.
     assert(wcscmp(launch->lpVerb, elevated ? L"open" : L"runas") == 0);
+    assert(elevated || launch->hwnd == foregroundWindow);
     ++launches;
+    launchOwner = launch->hwnd;
     lastArguments = launch->lpParameters;
     if (mode == Cancel || mode == Fail) {
         SetLastError(mode == Cancel ? ERROR_CANCELLED : ERROR_ACCESS_DENIED);
@@ -36,13 +42,47 @@ static BOOL FakeShellExecute(SHELLEXECUTEINFOW* launch) {
     launch->hProcess = process.hProcess;
     return TRUE;
 }
+static HWND FakeGetForegroundWindow() { return foregroundWindow; }
+static INT_PTR dialogResult;
+static BOOL FakeEndDialog(HWND window, INT_PTR result) {
+    assert(window == foregroundWindow);
+    dialogResult = result;
+    return TRUE;
+}
+static INT_PTR FakeDialogBoxParam(HINSTANCE, LPCWSTR, HWND owner, DLGPROC procedure, LPARAM data) {
+    ++foregroundPrompts;
+    assert(ElevationRestartPending());
+    const wchar_t* className = L"TaskbarMonitorFakeDialog";
+    WNDCLASSW window = {};
+    window.lpfnWndProc = DefWindowProcW;
+    window.cbWndExtra = DLGWINDOWEXTRA;
+    window.hInstance = GetModuleHandleW(NULL);
+    window.lpszClassName = className;
+    assert(RegisterClassW(&window) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
+    HWND dialog = CreateWindowW(className, L"", WS_POPUP, 0, 0, 1, 1, owner, NULL, window.hInstance, NULL);
+    assert(dialog);
+    HWND previous = foregroundWindow;
+    foregroundWindow = dialog;
+    dialogResult = -1;
+    procedure(dialog, WM_INITDIALOG, 0, data);
+    procedure(dialog, WM_COMMAND, continueToUac ? IDOK : IDCANCEL, 0);
+    foregroundWindow = previous;
+    DestroyWindow(dialog);
+    return dialogResult;
+}
 #define IsUserAnAdmin FakeIsUserAnAdmin
 #define MessageBoxW FakeMessageBox
 #define ShellExecuteExW FakeShellExecute
+#define GetForegroundWindow FakeGetForegroundWindow
+#define DialogBoxParamW FakeDialogBoxParam
+#define EndDialog FakeEndDialog
 #include "../src/Elevation.cpp"
 #undef IsUserAnAdmin
 #undef MessageBoxW
 #undef ShellExecuteExW
+#undef GetForegroundWindow
+#undef DialogBoxParamW
+#undef EndDialog
 
 static void CheckAutomaticSensorAccess(HWND host) {
     HardwareSensorStatus status;
@@ -71,10 +111,20 @@ static void CheckAutomaticSensorAccess(HWND host) {
     assert(!check(SensorAccessRequest::SavedChoice, true, false) && installQuestions == 1);
     installAnswer = IDYES;
     assert(check(SensorAccessRequest::SavedChoice, true, false) && installQuestions == 2);
+    assert(!check(SensorAccessRequest::InstalledDriverOnly, true, false) && installQuestions == 2);
     status.driverInstalled = true;
     assert(check(SensorAccessRequest::SavedChoice, true, false) && installQuestions == 2);
+    assert(check(SensorAccessRequest::InstalledDriverOnly, true, false) && installQuestions == 2);
     assert(lastArguments.find(L"--install-cpu-driver") == std::wstring::npos);
+    status.temperatures.cpu = 55.0;
+    assert(check(SensorAccessRequest::InstalledDriverOnly, true, false)); // A fallback can mask a missing direct reading.
+    status.directCpu = true;
+    assert(!check(SensorAccessRequest::InstalledDriverOnly, true, false));
+    status.directCpu = false;
+    status.temperatures.cpu = -1.0;
+    assert(!check(SensorAccessRequest::InstalledDriverOnly, false, false));
     status.administrator = elevated = true;
+    assert(!check(SensorAccessRequest::InstalledDriverOnly, true, true));
     assert(!check(SensorAccessRequest::JustApproved, true, true));
     status.driverInstalled = false;
     assert(check(SensorAccessRequest::JustApproved, true, true));
@@ -149,6 +199,15 @@ int main(int argc, char** argv) {
         assert(RegisterClassW(&window));
         HWND host = CreateWindowW(window.lpszClassName, L"", 0, 0, 0, 1, 1, NULL, NULL, window.hInstance, NULL);
         assert(host);
+        continueToUac = false;
+        assert(!RequestElevatedRestart(NULL, host));
+        assert(foregroundPrompts == 1 && launches == 0 && !ElevationRestartPending());
+        continueToUac = true;
+        assert(!RequestElevatedRestart(NULL, host));
+        assert(foregroundPrompts == 2 && launches == 1 && launchOwner != host);
+        foregroundWindow = host;
+        assert(!RequestElevatedRestart(host, host));
+        assert(foregroundPrompts == 2 && launches == 2 && launchOwner == host);
         CheckAutomaticSensorAccess(host);
         assert(!RequestElevatedRestart(host, host) && !closed && warnings == 0);
         assert(lastArguments.find(L"--temperatures") != std::wstring::npos);

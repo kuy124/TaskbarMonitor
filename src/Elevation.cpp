@@ -1,5 +1,6 @@
 #include "Elevation.h"
 #include "HardwareSensors.h"
+#include "Resource.h"
 #include <shlobj.h>
 #include <cerrno>
 #include <string>
@@ -9,6 +10,32 @@ namespace {
 HANDLE readyEvent = NULL, childProcess = NULL;
 HWND requestOwner = NULL;
 ULONGLONG requestStarted = 0;
+
+DWORD LaunchElevation(SHELLEXECUTEINFOW& launch) {
+    if (!ShellExecuteExW(&launch)) return GetLastError();
+    return launch.hProcess ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
+}
+
+INT_PTR CALLBACK SensorAccessDialog(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_INITDIALOG) {
+        SetWindowLongPtrW(dialog, DWLP_USER, lParam);
+        return TRUE;
+    }
+    if (message == WM_CLOSE || (message == WM_COMMAND && LOWORD(wParam) == IDCANCEL)) {
+        if (GetWindowLongPtrW(dialog, DWLP_USER)) EndDialog(dialog, ERROR_CANCELLED);
+        return TRUE;
+    }
+    if (message == WM_COMMAND && LOWORD(wParam) == IDOK) {
+        auto* launch = reinterpret_cast<SHELLEXECUTEINFOW*>(GetWindowLongPtrW(dialog, DWLP_USER));
+        if (launch) {
+            SetWindowLongPtrW(dialog, DWLP_USER, 0);
+            launch->hwnd = dialog;
+            EndDialog(dialog, LaunchElevation(*launch));
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
 
 std::wstring EventName(DWORD process, const wchar_t* nonce) {
     return L"Local\\TaskbarMonitor.Elevation." + std::to_wstring(process) + L"." + nonce;
@@ -65,8 +92,12 @@ bool RequestElevatedRestart(HWND settingsWindow, HWND host, bool installCpuDrive
     launch.lpFile = executable;
     launch.lpParameters = arguments.c_str();
     launch.nShow = SW_SHOWNORMAL;
-    if (!ShellExecuteExW(&launch) || !launch.hProcess) {
-        DWORD error = GetLastError();
+    // Windows can queue UAC on the taskbar when the request has no foreground owner.
+    DWORD error = !elevated && owner != GetForegroundWindow()
+        ? static_cast<DWORD>(DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_SENSOR_ACCESS),
+                                             owner, SensorAccessDialog, reinterpret_cast<LPARAM>(&launch)))
+        : LaunchElevation(launch);
+    if (error != ERROR_SUCCESS || !launch.hProcess) {
         CancelElevatedRestart();
         if (error != ERROR_CANCELLED)
             MessageBoxW(owner, L"Could not request administrator access. The monitor is still running.", L"TaskbarMonitor", MB_OK | MB_ICONWARNING);
@@ -84,10 +115,13 @@ void CompleteSensorAccessRequest(SensorAccessRequest& request, HWND host, const 
     if (request == SensorAccessRequest::None) return;
     if ((missingCpu || missingGpu) && !status.checked) return;
     bool installApproved = request == SensorAccessRequest::JustApproved;
+    bool installedDriverOnly = request == SensorAccessRequest::InstalledDriverOnly;
     request = SensorAccessRequest::None; // UAC pumps window messages; consume this attempt before opening a dialog.
-    bool driverCanHelp = (missingCpu && status.temperatures.cpu < 0 && status.directCpuSupported) ||
+    bool driverCanHelp = (missingCpu && status.directCpuSupported &&
+                          (status.temperatures.cpu < 0 || (installedDriverOnly && !status.directCpu))) ||
                          (missingGpu && status.temperatures.gpu < 0 && status.driverGpuSupported);
     if (!status.running || !driverCanHelp || (status.driverInstalled && status.administrator)) return;
+    if (installedDriverOnly && !status.driverInstalled) return;
     if (!status.driverInstalled && !installApproved &&
         MessageBoxW(host, L"Install the signed PawnIO driver to read your hardware temperatures?",
                     L"TaskbarMonitor temperatures", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES) return;

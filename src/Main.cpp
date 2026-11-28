@@ -82,11 +82,13 @@ static LRESULT CALLBACK HostWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         RefreshHardwareSensorStatus();
         if (g_hWnd && IsWindow(g_hWnd)) InvalidateRect(g_hWnd, NULL, FALSE);
         if (g_sensorAccessRequest != SensorAccessRequest::None) {
+            HardwareSensorStatus status = GetHardwareSensorStatus();
             bool missingCpu = g_config.useLibreHardware && g_config.showCPUTemp &&
-                              (g_metrics.cpuTemp < 0 || g_metrics.cpuTempEstimated);
+                              (g_metrics.cpuTemp < 0 || g_metrics.cpuTempEstimated ||
+                               (g_sensorAccessRequest == SensorAccessRequest::InstalledDriverOnly && !status.directCpu));
             bool missingGpu = g_config.useLibreHardware && g_config.showGPUTemp &&
                               (g_metrics.gpuTemp < 0 || g_metrics.gpuTempEstimated);
-            CompleteSensorAccessRequest(g_sensorAccessRequest, hWnd, GetHardwareSensorStatus(), missingCpu, missingGpu);
+            CompleteSensorAccessRequest(g_sensorAccessRequest, hWnd, status, missingCpu, missingGpu);
         }
         return 0;
     case WM_TRAYICON:
@@ -299,8 +301,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int) {
     if (g_deferredTemperatureChoice) g_config.useLibreHardware = false;
     bool choseSensors = !elevatedRestart && !g_deferredTemperatureChoice && AskForTemperatureChoice(NULL);
     if (choseSensors) g_sensorAccessRequest = SensorAccessRequest::JustApproved;
-    else if (!bAutoStart && !openSettings && !elevatedRestart && g_config.useLibreHardware)
-        g_sensorAccessRequest = SensorAccessRequest::SavedChoice;
+    else if (!openSettings && !elevatedRestart && g_config.useLibreHardware &&
+             !(pCmdLine && wcsstr(pCmdLine, L"--update-restart")))
+        g_sensorAccessRequest = bAutoStart ? SensorAccessRequest::InstalledDriverOnly : SensorAccessRequest::SavedChoice;
     if (installCpuDriver && g_config.useLibreHardware) {
         HRESULT result = InstallCpuSensorDriver();
         if (result == HRESULT_FROM_WIN32(ERROR_SUCCESS_REBOOT_REQUIRED))

@@ -2,7 +2,7 @@
 #include "Common.h"
 
 struct HardwareSensorStatus;
-enum class SensorAccessRequest { None, SavedChoice, JustApproved };
+enum class SensorAccessRequest { None, SavedChoice, InstalledDriverOnly, JustApproved };
 
 bool IsProcessElevated();
 bool ElevationRestartPending();

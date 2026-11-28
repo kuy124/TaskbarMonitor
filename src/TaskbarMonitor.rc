@@ -6,9 +6,20 @@
 1 24 "TaskbarMonitor.manifest"
 IDI_TASKBARMONITOR ICON "TaskbarMonitor.ico"
 
+IDD_SENSOR_ACCESS DIALOGEX 0, 0, 220, 66
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOPMOST
+CAPTION "TaskbarMonitor sensor access"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Windows needs administrator approval to read your hardware temperatures.", -1, 10, 9, 200, 22
+    DEFPUSHBUTTON "Continue", IDOK, 98, 42, 54, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 156, 42, 54, 14
+END
+
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,2,9,0
-PRODUCTVERSION  1,2,9,0
+FILEVERSION     1,2,10,0
+PRODUCTVERSION  1,2,10,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -21,12 +32,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "TaskbarMonitor Open Source Project"
             VALUE "FileDescription",  "TaskbarMonitor"
-            VALUE "FileVersion",      "1.2.9.0"
+            VALUE "FileVersion",      "1.2.10.0"
             VALUE "InternalName",     "TaskbarMonitor"
             VALUE "LegalCopyright",   "Copyright (C) 2026 TaskbarMonitor Project"
             VALUE "OriginalFilename", "TaskbarMonitor.exe"
             VALUE "ProductName",      "TaskbarMonitor"
-            VALUE "ProductVersion",   "1.2.9.0"
+            VALUE "ProductVersion",   "1.2.10.0"
         END
     END
     BLOCK "VarFileInfo"

@@ -1,3 +1,4 @@
 #pragma once
 
 #define IDI_TASKBARMONITOR 101
+#define IDD_SENSOR_ACCESS 102

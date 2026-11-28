@@ -59,7 +59,7 @@ function Install-Update([string]$Replacement, [string]$Executable, [string]$Back
     try {
         Replace-Executable $Replacement $Executable $Backup
         $replaced = $true
-        $started = Start-Process -FilePath $Executable -ArgumentList '--autostart' -PassThru
+        $started = Start-Process -FilePath $Executable -ArgumentList '--autostart --update-restart' -PassThru
         if ($started.WaitForExit(3000)) { throw 'Updated app did not stay running' }
         return $started
     } catch {
@@ -181,7 +181,7 @@ public static class UpdateWindow {
             $restartPath = $backup
             $stage = $null
         }
-        Start-Process -FilePath $restartPath -ArgumentList '--autostart' -ErrorAction SilentlyContinue
+        Start-Process -FilePath $restartPath -ArgumentList '--autostart --update-restart' -ErrorAction SilentlyContinue
     }
     # Offline, API rate limits, and unwritable folders must not disrupt the monitor.
     if ($accepted) {
